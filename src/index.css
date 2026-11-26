@@ -1,0 +1,139 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #eef5f0;
+  --surface: #ffffff;
+  --surface-2: #f4f9f5;
+  --sunk: #dfeee3;
+  --ink: #10291b;
+  --muted: #526e5e;
+  --line: #cfe3d4;
+  --accent: #16834a;
+  --accent-ink: #ffffff;
+  --accent-soft: #d2f0da;
+  --mint: #8fe89c;
+  --nav: #0f2a1b;
+  --nav-ink: #d5f3dc;
+  --nav-muted: #86b394;
+  --warn: #a5650f;
+  --warn-soft: #fbecd2;
+  --danger: #b4332a;
+  --danger-soft: #f8dcd8;
+  --info: #1f5fae;
+  --info-soft: #dbe8fa;
+  --teal: #0e7a83;
+  --teal-soft: #d3f0f2;
+  --bubble-in: #ffffff;
+  --bubble-out: #d3f5dc;
+  --bubble-sys: #eef4fb;
+  --note: #fdf3e6;
+  --f-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --f-body: "Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+
+:root.dark {
+  --bg: #0b1610;
+  --surface: #122219;
+  --surface-2: #16291e;
+  --sunk: #0e1c14;
+  --ink: #e2f3e6;
+  --muted: #98b4a1;
+  --line: #23402e;
+  --accent: #4cc77a;
+  --accent-ink: #04200f;
+  --accent-soft: #1b462a;
+  --mint: #4cc77a;
+  --nav: #07120c;
+  --nav-ink: #d5f3dc;
+  --nav-muted: #7aa487;
+  --warn: #e9a94a;
+  --warn-soft: #3a2a10;
+  --danger: #f08a80;
+  --danger-soft: #3d1b18;
+  --info: #7fb2f0;
+  --info-soft: #152a45;
+  --teal: #5fd0d8;
+  --teal-soft: #123a3d;
+  --bubble-in: #1a2e22;
+  --bubble-out: #1d4a2c;
+  --bubble-sys: #172638;
+  --note: #2e2410;
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--f-display);
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+.font-display {
+  font-family: var(--f-display);
+}
+
+.font-mono-num {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.coach-target {
+  outline: 3px solid var(--mint) !important;
+  outline-offset: 3px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 7px rgba(76, 199, 122, 0.25);
+  position: relative;
+  z-index: 25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+}

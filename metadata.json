@@ -1,0 +1,6 @@
+{
+  "name": "Central de Treinamentos · Trainee",
+  "description": "Programa intensivo de treinamento corporativo de nível básico ao avançado em até 3 dias, com simulador de atendimento com IA, passo a passo guiado, CRM, consultas, solicitações e provas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
