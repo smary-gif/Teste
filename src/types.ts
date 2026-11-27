@@ -384,6 +384,12 @@ export interface EditableVideoScript {
   scenes: EditableVideoScene[];
 }
 
+export interface TrilhaStore {
+  items: Record<string, boolean>;
+  quiz: Record<string, number>;
+  valid: Record<string, { by: string; at: number }>;
+}
+
 export interface SharedPortalContent {
   cfg?: PortalConfig;
   videoOverrides?: Record<string, EditableVideoScript>;
@@ -391,5 +397,10 @@ export interface SharedPortalContent {
   sharedVoiceProfile?: AiVoiceProfile | null;
   teamSubsectors?: Record<string, string>;
   opsAccessOverrides?: Record<string, 'unlocked' | 'locked'>;
+  traineeByPerson?: Record<string, TraineeProgressStore>;
+  reciclagemByPerson?: Record<string, ReciclagemPersonProgress>;
+  trilhaData?: Record<string, TrilhaStore>;
+  cronoRecords?: Record<string, CronoRecord>;
+  customCollaborators?: string[];
   updatedAt?: number;
 }

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AdminMonitorModal } from './components/AdminMonitorModal';
 import { AdminView } from './components/AdminView';
 import { CoachOverlay } from './components/CoachOverlay';
 import { ConfirmationBoardView } from './components/ConfirmationBoardView';
@@ -163,6 +164,8 @@ export default function App() {
   const [googleAuthLoading, setGoogleAuthLoading] = useState<boolean>(false);
   const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
   const [googleModalOpen, setGoogleModalOpen] = useState<boolean>(false);
+  const [adminMonitorOpen, setAdminMonitorOpen] = useState<boolean>(false);
+  const adminAutoPromptedRef = useRef<boolean>(false);
 
   const [traineeByPerson, setTraineeByPerson] = useState<
     Record<string, TraineeProgressStore>
@@ -282,42 +285,107 @@ export default function App() {
       .catch(() => setAiConfigured(false));
   }, []);
 
-  useEffect(() => {
-    fetch('/api/shared/content')
-      .then((r) => r.json())
-      .then((data: SharedPortalContent) => {
-        if (data.cfg) {
-          const remoteOrdem = Array.isArray(data.cfg.treinoOrdem)
-            ? data.cfg.treinoOrdem.filter((n) => !isAdminCollaboratorName(n))
-            : null;
-          setCfg((prev) => ({
-            ...prev,
-            ...data.cfg,
-            treinoOrdem:
-              remoteOrdem && remoteOrdem.length ? remoteOrdem : prev.treinoOrdem,
-            templates: { ...prev.templates, ...(data.cfg?.templates || {}) },
-          }));
-        }
-        if (data.teamSubsectors) {
-          setTeamSubsectors(data.teamSubsectors);
-          saveStorage('ct_team_subs_v1', data.teamSubsectors);
-        }
-        if (data.videoOverrides) {
-          setVideoOverrides(data.videoOverrides);
-        }
-        if (data.sceneAudioUrls) {
-          setSharedSceneAudios(data.sceneAudioUrls);
-        }
-        if (data.sharedVoiceProfile !== undefined) {
-          setSharedVoiceProfile(data.sharedVoiceProfile);
-        }
-        if (data.opsAccessOverrides) {
-          setOpsAccessOverrides(data.opsAccessOverrides);
-          saveStorage('ct_ops_locks_v1', data.opsAccessOverrides);
-        }
-      })
-      .catch(() => undefined);
+  const refreshSharedContent = useCallback(async () => {
+    try {
+      const r = await fetch('/api/shared/content');
+      if (!r.ok) return;
+      const data = (await r.json()) as SharedPortalContent;
+      if (data.cfg) {
+        const remoteOrdem = Array.isArray(data.cfg.treinoOrdem)
+          ? data.cfg.treinoOrdem.filter((n) => !isAdminCollaboratorName(n))
+          : null;
+        setCfg((prev) => ({
+          ...prev,
+          ...data.cfg,
+          treinoOrdem:
+            remoteOrdem && remoteOrdem.length ? remoteOrdem : prev.treinoOrdem,
+          templates: { ...prev.templates, ...(data.cfg?.templates || {}) },
+        }));
+      }
+      if (data.teamSubsectors) {
+        setTeamSubsectors(data.teamSubsectors);
+        saveStorage('ct_team_subs_v1', data.teamSubsectors);
+      }
+      if (data.videoOverrides) {
+        setVideoOverrides(data.videoOverrides);
+      }
+      if (data.sceneAudioUrls) {
+        setSharedSceneAudios(data.sceneAudioUrls);
+      }
+      if (data.sharedVoiceProfile !== undefined) {
+        setSharedVoiceProfile(data.sharedVoiceProfile);
+      }
+      if (data.opsAccessOverrides) {
+        setOpsAccessOverrides(data.opsAccessOverrides);
+        saveStorage('ct_ops_locks_v1', data.opsAccessOverrides);
+      }
+      if (Array.isArray(data.customCollaborators) && data.customCollaborators.length) {
+        const cleaned = data.customCollaborators.filter((n) => !isAdminCollaboratorName(n));
+        setCustomCollaborators((prev) => {
+          const seen = new Set(prev.map((x) => canonicalPersonKey(x)));
+          const next = [...prev];
+          cleaned.forEach((n) => {
+            const k = canonicalPersonKey(n);
+            if (!seen.has(k)) {
+              seen.add(k);
+              next.push(n);
+            }
+          });
+          saveStorage('ct_custom_collabs_v1', next);
+          return next;
+        });
+      }
+      if (data.traineeByPerson) {
+        setTraineeByPerson((prev) => {
+          const next = { ...prev, ...data.traineeByPerson };
+          saveStorage('ct_trn_by_person_v2', next);
+          return next;
+        });
+      }
+      if (data.reciclagemByPerson) {
+        setReciclagemByPerson((prev) => {
+          const next = { ...prev, ...data.reciclagemByPerson };
+          saveStorage('ct_reciclagem_v1', next);
+          return next;
+        });
+      }
+      if (data.trilhaData) {
+        setTrilhaData((prev) => {
+          const next = { ...prev, ...data.trilhaData };
+          saveStorage('ct_trilha_v1', next);
+          return next;
+        });
+      }
+      if (data.cronoRecords) {
+        setCronoRecords((prev) => {
+          const next = { ...prev, ...data.cronoRecords };
+          saveStorage('ct_crono_v1', next);
+          return next;
+        });
+      }
+    } catch {
+      // ignore offline refresh errors
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshSharedContent();
+  }, [refreshSharedContent]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const onFocus = () => {
+      void refreshSharedContent();
+    };
+    window.addEventListener('focus', onFocus);
+    const interval = window.setInterval(() => {
+      void refreshSharedContent();
+    }, 15000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(interval);
+    };
+  }, [isAdmin, refreshSharedContent]);
 
   const activeProgress: TraineeProgressStore =
     traineeByPerson[activeCollaborator] || EMPTY_TRAINEE_PROGRESS();
@@ -409,6 +477,7 @@ export default function App() {
             ...prev.filter((x) => canonicalPersonKey(x) !== targetKey),
           ];
           saveStorage('ct_custom_collabs_v1', next);
+          void persistSharedContent({ customCollaborators: next });
           return next;
         });
       }
@@ -416,19 +485,23 @@ export default function App() {
       saveStorage('ct_active_collab_v1', targetName);
       setTraineeByPerson((prev) => {
         if (prev[targetName]) return prev;
-        const next = { ...prev, [targetName]: EMPTY_TRAINEE_PROGRESS() };
+        const fresh = EMPTY_TRAINEE_PROGRESS();
+        const next = { ...prev, [targetName]: fresh };
         saveStorage('ct_trn_by_person_v2', next);
+        void persistSharedContent({ traineeByPerson: { [targetName]: fresh } });
         return next;
       });
       setReciclagemByPerson((prev) => {
         if (prev[targetName]) return prev;
-        const next = { ...prev, [targetName]: EMPTY_RECICLAGEM_PROGRESS(targetName) };
+        const freshRec = EMPTY_RECICLAGEM_PROGRESS(targetName);
+        const next = { ...prev, [targetName]: freshRec };
         saveStorage('ct_reciclagem_v1', next);
+        void persistSharedContent({ reciclagemByPerson: { [targetName]: freshRec } });
         return next;
       });
       showToast(`Acesso vinculado a ${targetName}.`);
     },
-    [collaborators, showToast]
+    [collaborators, persistSharedContent, showToast]
   );
 
   const collaboratorsRef = useRef(collaborators);
@@ -444,8 +517,14 @@ export default function App() {
         if (adminAccount) {
           setIsAdmin(true);
           setActiveAdminLabel(adminAccount.label);
+          void refreshSharedContent();
+          if (!adminAutoPromptedRef.current) {
+            adminAutoPromptedRef.current = true;
+            setAdminMonitorOpen(true);
+          }
           return;
         }
+        adminAutoPromptedRef.current = false;
         setIsAdmin(false);
         setActiveAdminLabel(null);
         const matched = resolveCollaboratorFromGoogle(profile, collaboratorsRef.current);
@@ -465,7 +544,7 @@ export default function App() {
       }
     );
     return unsubscribe;
-  }, [handleAddCollaborator]);
+  }, [handleAddCollaborator, refreshSharedContent]);
 
   const handleGoogleSignIn = useCallback(async () => {
     setGoogleAuthLoading(true);
@@ -483,6 +562,9 @@ export default function App() {
       if (adminAccount) {
         setIsAdmin(true);
         setActiveAdminLabel(adminAccount.label);
+        adminAutoPromptedRef.current = true;
+        void refreshSharedContent();
+        setAdminMonitorOpen(true);
         showToast(`ADM conectada via Google: ${adminAccount.label}`);
         return;
       }
@@ -584,8 +666,9 @@ export default function App() {
         saveStorage('ct_trn_by_person_v2', updated);
         return updated;
       });
+      void persistSharedContent({ traineeByPerson: { [activeCollaborator]: next } });
     },
-    [activeCollaborator]
+    [activeCollaborator, persistSharedContent]
   );
 
   const handleSignalPractice = useCallback(
@@ -600,10 +683,11 @@ export default function App() {
         };
         const nextMap = { ...prev, [activeCollaborator]: updatedPerson };
         saveStorage('ct_trn_by_person_v2', nextMap);
+        void persistSharedContent({ traineeByPerson: { [activeCollaborator]: updatedPerson } });
         return nextMap;
       });
     },
-    [activeCollaborator]
+    [activeCollaborator, persistSharedContent]
   );
 
   const handleCaseEvaluated = useCallback(
@@ -617,10 +701,11 @@ export default function App() {
         };
         const nextMap = { ...prev, [activeCollaborator]: updatedPerson };
         saveStorage('ct_trn_by_person_v2', nextMap);
+        void persistSharedContent({ traineeByPerson: { [activeCollaborator]: updatedPerson } });
         return nextMap;
       });
     },
-    [activeCollaborator]
+    [activeCollaborator, persistSharedContent]
   );
 
   const handleOpenQuickSim = useCallback((deptKeyArg?: string, patientIdArg?: string) => {
@@ -1071,8 +1156,14 @@ export default function App() {
           setIsAdmin((prev) => {
             const next = !prev;
             if (!next && view === 'administracao') setView('trainee');
-            if (next && !activeAdminLabel) {
-              setActiveAdminLabel(ADMIN_DIRECTORY[0].label);
+            if (next) {
+              if (!activeAdminLabel) {
+                setActiveAdminLabel(ADMIN_DIRECTORY[0].label);
+              }
+              void refreshSharedContent();
+              setAdminMonitorOpen(true);
+            } else {
+              setAdminMonitorOpen(false);
             }
             showToast(
               next
@@ -1109,6 +1200,10 @@ export default function App() {
           onGoogleSignOut={handleGoogleSignOut}
           isAdmin={isAdmin}
           activeAdminLabel={activeAdminLabel}
+          onOpenAdminMonitor={() => {
+            void refreshSharedContent();
+            setAdminMonitorOpen(true);
+          }}
         />
 
         <main className="min-w-0 flex-1 p-4 md:p-6 lg:p-7 overflow-x-hidden">
@@ -1235,6 +1330,7 @@ export default function App() {
                   saveStorage('ct_reciclagem_v1', updated);
                   return updated;
                 });
+                void persistSharedContent({ reciclagemByPerson: { [person]: next } });
               }}
               isAdmin={isAdmin}
               onOpenQuickSim={handleOpenQuickSim}
@@ -1343,6 +1439,7 @@ export default function App() {
                 const updated = { ...trilhaData, [person]: next };
                 setTrilhaData(updated);
                 saveStorage('ct_trilha_v1', updated);
+                void persistSharedContent({ trilhaData: { [person]: next } });
               }}
               isAdmin={isAdmin}
               traineeName={activeCollaborator}
@@ -1360,6 +1457,7 @@ export default function App() {
                 const updated = { ...cronoRecords, [person]: rec };
                 setCronoRecords(updated);
                 saveStorage('ct_crono_v1', updated);
+                void persistSharedContent({ cronoRecords: { [person]: rec } });
               }}
               isAdmin={isAdmin}
               traineeName={activeCollaborator}
@@ -1652,6 +1750,24 @@ export default function App() {
         error={googleAuthError}
         onGoogleSignIn={handleGoogleSignIn}
         onContinueWithoutLogin={handleDismissGoogleModal}
+      />
+
+      <AdminMonitorModal
+        open={isAdmin && adminMonitorOpen}
+        onClose={() => setAdminMonitorOpen(false)}
+        activeAdminLabel={activeAdminLabel}
+        collaborators={collaborators}
+        activeCollaborator={activeCollaborator}
+        onSelectCollaborator={handleChangeCollaborator}
+        traineeByPerson={traineeByPerson}
+        reciclagemByPerson={reciclagemByPerson}
+        trilhaData={trilhaData}
+        cronoRecords={cronoRecords}
+        teamSubsectors={teamSubsectors}
+        opsAccessOverrides={opsAccessOverrides}
+        onToggleOpsAccess={handleToggleOpsAccess}
+        onRefreshSync={refreshSharedContent}
+        onGoView={handleSelectView}
       />
 
       {toastMsg && (

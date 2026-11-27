@@ -1,14 +1,10 @@
 import React, { useState } from 'react';
 import { Bot } from 'lucide-react';
 import { TRILHA_STAGES } from '../data/defaults';
-import type { PortalConfig } from '../types';
+import type { PortalConfig, TrilhaStore } from '../types';
 import { StatusBadge } from './StatusBadge';
 
-export interface TrilhaStore {
-  items: Record<string, boolean>;
-  quiz: Record<string, number>;
-  valid: Record<string, { by: string; at: number }>;
-}
+export type { TrilhaStore };
 
 interface IntegrationTrackViewProps {
   cfg: PortalConfig;

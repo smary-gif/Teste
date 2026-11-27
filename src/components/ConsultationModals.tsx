@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { MEDS } from '../data/defaults';
 import type { ConsultationRow } from '../types';
-import { getTodayMeta, pad } from '../utils/helpers';
+import { getTodayMeta, norm, pad } from '../utils/helpers';
 import { getConsultationTone, StatusBadge } from './StatusBadge';
 
 export interface ChatTargetOption {
@@ -476,13 +476,18 @@ export function formatDateKeyToBr(dateKey: string): string {
 
 export function buildConsultationLinks(proc: string) {
   const slug = proc.replace('#', '').toLowerCase() || '00101';
+  const code = slug.toUpperCase();
   return {
     consulta: `https://sala.clickcannabis.com/consulta/${slug}`,
     convidado: `https://sala.clickcannabis.com/convidado/${slug}?perfil=convidado`,
     medico: `https://sala.clickcannabis.com/medico/${slug}`,
     anamnese: `https://app.clickcannabis.com/anamnese/${slug}`,
-    nfLink: `https://nfse.clickcannabis.com/nota/NF-2026-${slug}`,
-    nfNumero: `NF-2026-${slug.toUpperCase()}`,
+    nfMedicoNumero: `NF-MED-2026-${code}`,
+    nfMedicoLink: `https://nfse.clickcannabis.com/nota/NF-MED-2026-${slug}`,
+    nfClickNumero: `NF-CLK-2026-${code}`,
+    nfClickLink: `https://nfse.clickcannabis.com/nota/NF-CLK-2026-${slug}`,
+    nfLink: `https://nfse.clickcannabis.com/nota/NF-MED-2026-${slug}`,
+    nfNumero: `NF-MED-2026-${code}`,
   };
 }
 
@@ -1121,11 +1126,14 @@ export function InvoiceModal({
   onForward: (patientId: string, text: string, label: string, openChat: boolean) => void;
 }) {
   const links = buildConsultationLinks(row.proc);
-  const valor = row.tipo === 'Gratuita' ? 'R$ 0,00 (Gratuita)' : 'R$ 89,00';
+  const isFree = norm(row.tipo).includes('gratuit');
+  const valorTotal = isFree ? 'R$ 0,00 (Gratuita)' : 'R$ 50,00';
   const [targetChatId, setTargetChatId] = useState(() =>
     resolveDefaultChatId(row, chatTargets)
   );
-  const nfMessage = `Olá, ${row.nome.split(' ')[0]}! Segue a Nota Fiscal (${links.nfNumero}) referente à sua ${row.tipo.toLowerCase()} com ${row.medico}:\n• Valor: ${valor}\n• Status: Emitida\n• PDF da NFS-e: ${links.nfLink}`;
+  const nfMessage = isFree
+    ? `Olá, ${row.nome.split(' ')[0]}! Sua consulta com ${row.medico} foi na modalidade Gratuita (R$ 0,00), portanto não há emissão de Nota Fiscal cobrada.`
+    : `Olá, ${row.nome.split(' ')[0]}! Seguem as Notas Fiscais referentes à sua ${row.tipo.toLowerCase()} com ${row.medico} (Total ${valorTotal}):\n• NF Médico (${links.nfMedicoNumero} · R$ 45,00): ${links.nfMedicoLink}\n• NF ClickCannabis (${links.nfClickNumero} · R$ 5,00): ${links.nfClickLink}`;
   const [message, setMessage] = useState(nfMessage);
 
   return (
@@ -1138,16 +1146,18 @@ export function InvoiceModal({
       aria-modal="true"
       aria-label={`Nota fiscal de ${row.nome}`}
     >
-      <div className="bg-[var(--surface)] border border-[var(--line)] rounded-2xl w-full max-w-[540px] overflow-hidden shadow-2xl">
+      <div className="bg-[var(--surface)] border border-[var(--line)] rounded-2xl w-full max-w-[580px] overflow-hidden shadow-2xl">
         <div className="px-5 py-3.5 border-b border-[var(--line)] flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="h-9 w-9 rounded-xl bg-[var(--accent-soft)] text-[var(--accent)] grid place-items-center shrink-0">
               <Receipt className="h-4 w-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold">Nota fiscal · {links.nfNumero}</h3>
+              <h3 className="text-base font-bold">
+                Notas Fiscais · {isFree ? 'Gratuita' : 'Médico R$ 45,00 + Click R$ 5,00'}
+              </h3>
               <p className="text-xs text-[var(--muted)]">
-                Documento fiscal simulado · ClickCannabis
+                Emissão fracionada padrão ClickCannabis (Médico R$ 45,00 · Click R$ 5,00)
               </p>
             </div>
           </div>
@@ -1161,13 +1171,15 @@ export function InvoiceModal({
           </button>
         </div>
 
-        <div className="p-5 space-y-4 text-xs">
-          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3.5 space-y-2">
+        <div className="p-5 space-y-4 text-xs max-h-[75vh] overflow-y-auto">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3.5 space-y-3">
             <div className="flex items-center justify-between">
               <strong className="text-sm">{row.nome}</strong>
-              <StatusBadge tone="ok">Emitida</StatusBadge>
+              <StatusBadge tone={isFree ? 'neutral' : 'ok'}>
+                {isFree ? 'Isenta (Gratuita)' : '2 NFS-e Emitidas'}
+              </StatusBadge>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
               <div>
                 <span className="text-[var(--muted)] block">Prontuário</span>
                 <strong className="font-mono-num">{row.proc}</strong>
@@ -1180,32 +1192,79 @@ export function InvoiceModal({
               </div>
               <div>
                 <span className="text-[var(--muted)] block">Profissional</span>
-                <strong>{row.medico}</strong>
+                <strong className="truncate block">{row.medico}</strong>
               </div>
               <div>
-                <span className="text-[var(--muted)] block">Valor</span>
-                <strong className="font-mono-num">{valor}</strong>
+                <span className="text-[var(--muted)] block">Valor total</span>
+                <strong className="font-mono-num text-[var(--accent)]">{valorTotal}</strong>
               </div>
             </div>
-            <div className="pt-2 border-t border-[var(--line)] flex items-center justify-between gap-2">
-              <span className="font-mono-num text-[11px] text-[var(--muted)] truncate">
-                {links.nfLink}
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  copyText(
-                    links.nfLink,
-                    onToast,
-                    `Link da Nota Fiscal ${links.nfNumero} copiado.`
-                  )
-                }
-                className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 font-semibold hover:border-[var(--accent)] shrink-0"
-              >
-                <Copy className="h-3 w-3" />
-                Copiar NF
-              </button>
-            </div>
+
+            {!isFree && (
+              <div className="grid sm:grid-cols-2 gap-2.5 pt-2 border-t border-[var(--line)]">
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                      Emissão do Médico
+                    </span>
+                    <strong className="font-mono-num text-sm text-[var(--accent)]">
+                      R$ 45,00
+                    </strong>
+                  </div>
+                  <p className="font-mono-num text-[11px] font-bold text-[var(--ink)]">
+                    {links.nfMedicoNumero}
+                  </p>
+                  <p className="text-[11px] text-[var(--muted)] truncate">
+                    {row.medico} · Atendimento clínico
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyText(
+                        links.nfMedicoLink,
+                        onToast,
+                        `Nota Fiscal do Médico (${links.nfMedicoNumero} · R$ 45,00) copiada.`
+                      )
+                    }
+                    className="w-full inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1.5 font-semibold hover:border-[var(--accent)]"
+                  >
+                    <Copy className="h-3 w-3" />
+                    Copiar NF Médico (R$ 45)
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                      Emissão da ClickCannabis
+                    </span>
+                    <strong className="font-mono-num text-sm text-[var(--accent)]">
+                      R$ 5,00
+                    </strong>
+                  </div>
+                  <p className="font-mono-num text-[11px] font-bold text-[var(--ink)]">
+                    {links.nfClickNumero}
+                  </p>
+                  <p className="text-[11px] text-[var(--muted)] truncate">
+                    ClickCannabis · Taxa plataforma
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyText(
+                        links.nfClickLink,
+                        onToast,
+                        `Nota Fiscal da ClickCannabis (${links.nfClickNumero} · R$ 5,00) copiada.`
+                      )
+                    }
+                    className="w-full inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1.5 font-semibold hover:border-[var(--accent)]"
+                  >
+                    <Copy className="h-3 w-3" />
+                    Copiar NF Click (R$ 5)
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {chatTargets.length > 0 && (

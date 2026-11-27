@@ -278,11 +278,52 @@ async function startServer() {
         ? (JSON.parse(fs.readFileSync(SHARED_CONTENT_FILE, 'utf-8')) as Record<string, unknown>)
         : {};
       const incoming = (req.body || {}) as Record<string, unknown>;
-      const merged = {
+
+      const mergeRecordField = (field: string) => {
+        const prevObj =
+          existing[field] && typeof existing[field] === 'object'
+            ? (existing[field] as Record<string, unknown>)
+            : undefined;
+        const nextObj =
+          incoming[field] && typeof incoming[field] === 'object'
+            ? (incoming[field] as Record<string, unknown>)
+            : undefined;
+        if (!prevObj && !nextObj) return undefined;
+        return { ...(prevObj || {}), ...(nextObj || {}) };
+      };
+
+      const prevCustom = Array.isArray(existing.customCollaborators)
+        ? (existing.customCollaborators as string[])
+        : [];
+      const nextCustom = Array.isArray(incoming.customCollaborators)
+        ? (incoming.customCollaborators as string[])
+        : [];
+      const mergedCustom =
+        prevCustom.length || nextCustom.length
+          ? Array.from(new Set([...nextCustom, ...prevCustom]))
+          : undefined;
+
+      const merged: Record<string, unknown> = {
         ...existing,
         ...incoming,
         updatedAt: Date.now(),
       };
+
+      for (const field of [
+        'teamSubsectors',
+        'opsAccessOverrides',
+        'traineeByPerson',
+        'reciclagemByPerson',
+        'trilhaData',
+        'cronoRecords',
+      ]) {
+        const m = mergeRecordField(field);
+        if (m !== undefined) merged[field] = m;
+      }
+      if (mergedCustom !== undefined) {
+        merged.customCollaborators = mergedCustom;
+      }
+
       fs.writeFileSync(SHARED_CONTENT_FILE, JSON.stringify(merged, null, 2), 'utf-8');
       res.json(merged);
     } catch {

@@ -170,9 +170,17 @@ export function NegotiationModal({
   };
 
   const handleForwardInvoice = () => {
-    const valor = patient.tipo === 'Gratuita' ? 'R$ 0,00 (Gratuita)' : 'R$ 89,00';
-    const text = `Olá, ${patient.first}! Segue a Nota Fiscal (${links.nfNumero}) da sua consulta com ${patient.medico}:\n• Valor: ${valor}\n• Status: Emitida\n• PDF da NFS-e: ${links.nfLink}`;
-    copyToClipboard(links.nfLink, onToast, `Nota fiscal ${links.nfNumero} copiada.`);
+    const isFree = patient.tipo === 'Gratuita';
+    const text = isFree
+      ? `Olá, ${patient.first}! Sua consulta com ${patient.medico} foi na modalidade Gratuita (R$ 0,00), sem cobrança de Nota Fiscal.`
+      : `Olá, ${patient.first}! Seguem as Notas Fiscais da sua consulta com ${patient.medico} (Total R$ 50,00):\n• NF Médico (${links.nfMedicoNumero} · R$ 45,00): ${links.nfMedicoLink}\n• NF ClickCannabis (${links.nfClickNumero} · R$ 5,00): ${links.nfClickLink}`;
+    copyToClipboard(
+      isFree ? links.nfMedicoLink : `${links.nfMedicoLink} | ${links.nfClickLink}`,
+      onToast,
+      isFree
+        ? 'Informação de consulta gratuita copiada.'
+        : `Notas fiscais (Médico R$ 45 + Click R$ 5) copiadas.`
+    );
     onForwardToChat?.(text, 'Nota fiscal');
   };
 
@@ -1344,37 +1352,90 @@ export function NegotiationModal({
 
             {/* FINANCEIRO / NOTA FISCAL TAB */}
             {tab === 'financeiro' && (
-              <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 space-y-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-base font-bold">Nota fiscal · {links.nfNumero}</h3>
-                  <StatusBadge tone="ok">Emitida</StatusBadge>
-                </div>
-                <p className="text-[var(--muted)]">
-                  Referente à consulta de {patient.data.replaceAll('-', '/')} às {patient.hora} com{' '}
-                  <strong className="text-[var(--ink)]">{patient.medico}</strong>.
-                </p>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono-num">{links.nfLink}</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyToClipboard(links.nfLink, onToast, 'Link da Nota Fiscal copiado.')
-                      }
-                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 font-semibold"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      Copiar NF
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleForwardInvoice}
-                      className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] px-3 py-1.5 font-semibold"
-                    >
-                      <Send className="h-3.5 w-3.5" />
-                      Encaminhar no chat
-                    </button>
+              <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 space-y-4 text-xs">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h3 className="text-base font-bold">
+                      Notas Fiscais ·{' '}
+                      {patient.tipo === 'Gratuita' ? 'Gratuita (R$ 0,00)' : 'Médico R$ 45,00 + Click R$ 5,00'}
+                    </h3>
+                    <p className="text-[var(--muted)] mt-0.5">
+                      Referente à consulta de {patient.data.replaceAll('-', '/')} às {patient.hora} com{' '}
+                      <strong className="text-[var(--ink)]">{patient.medico}</strong>.
+                    </p>
                   </div>
+                  <StatusBadge tone={patient.tipo === 'Gratuita' ? 'neutral' : 'ok'}>
+                    {patient.tipo === 'Gratuita' ? 'Isenta' : '2 NFS-e Emitidas · R$ 50,00'}
+                  </StatusBadge>
+                </div>
+
+                {patient.tipo !== 'Gratuita' && (
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3.5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                          Médico emite
+                        </span>
+                        <strong className="font-mono-num text-sm text-[var(--accent)]">
+                          R$ 45,00
+                        </strong>
+                      </div>
+                      <p className="font-mono-num font-bold">{links.nfMedicoNumero}</p>
+                      <p className="text-[11px] text-[var(--muted)] truncate">{links.nfMedicoLink}</p>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyToClipboard(
+                            links.nfMedicoLink,
+                            onToast,
+                            `NF do Médico (${links.nfMedicoNumero} · R$ 45,00) copiada.`
+                          )
+                        }
+                        className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 font-semibold hover:border-[var(--accent)]"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copiar NF Médico (R$ 45)
+                      </button>
+                    </div>
+
+                    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3.5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                          ClickCannabis emite
+                        </span>
+                        <strong className="font-mono-num text-sm text-[var(--accent)]">
+                          R$ 5,00
+                        </strong>
+                      </div>
+                      <p className="font-mono-num font-bold">{links.nfClickNumero}</p>
+                      <p className="text-[11px] text-[var(--muted)] truncate">{links.nfClickLink}</p>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyToClipboard(
+                            links.nfClickLink,
+                            onToast,
+                            `NF da ClickCannabis (${links.nfClickNumero} · R$ 5,00) copiada.`
+                          )
+                        }
+                        className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 font-semibold hover:border-[var(--accent)]"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copiar NF Click (R$ 5)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={handleForwardInvoice}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] px-3.5 py-2 font-semibold"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Encaminhar Nota(s) no chat
+                  </button>
                 </div>
               </div>
             )}

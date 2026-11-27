@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Award, Bot, ChevronRight, LogOut, ShieldCheck, UserCheck, UserPlus, X } from 'lucide-react';
+import { Award, BarChart3, Bot, ChevronRight, LogOut, ShieldCheck, UserCheck, UserPlus, X } from 'lucide-react';
 import type { GoogleAuthProfile } from '../lib/googleAuth';
 import type { AppView, TraineeSummary } from '../types';
 import { ClickCannabisLogo } from './ClickCannabisLogo';
@@ -19,6 +19,7 @@ interface TopEnterpriseBarProps {
   onGoogleSignOut: () => void;
   isAdmin?: boolean;
   activeAdminLabel?: string | null;
+  onOpenAdminMonitor?: () => void;
 }
 
 export function TopEnterpriseBar({
@@ -35,6 +36,7 @@ export function TopEnterpriseBar({
   onGoogleSignOut,
   isAdmin = false,
   activeAdminLabel = null,
+  onOpenAdminMonitor,
 }: TopEnterpriseBarProps) {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
@@ -56,10 +58,15 @@ export function TopEnterpriseBar({
           <ClickCannabisLogo subtitle="Academia Corporativa · Trainee" />
           <span className="hidden sm:inline text-[var(--line)]">/</span>
           {isAdmin && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-soft)] border border-[var(--accent)] px-2.5 py-0.5 text-[11px] font-bold text-[var(--accent)] whitespace-nowrap">
+            <button
+              type="button"
+              onClick={onOpenAdminMonitor}
+              title="Escolher colaboradora e ver desempenho e notas"
+              className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-soft)] border border-[var(--accent)] px-2.5 py-0.5 text-[11px] font-bold text-[var(--accent)] whitespace-nowrap hover:brightness-95"
+            >
               <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
               ADM · {activeAdminLabel || 'Liderança'}
-            </span>
+            </button>
           )}
           {lockTraineeSwitch ? (
             <span className="hidden md:inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-semibold text-[var(--ink)]">
@@ -171,6 +178,17 @@ export function TopEnterpriseBar({
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          {isAdmin && onOpenAdminMonitor && (
+            <button
+              type="button"
+              onClick={onOpenAdminMonitor}
+              title="Escolher colaboradora para acompanhar e ver notas"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--accent)] hover:brightness-95 whitespace-nowrap"
+            >
+              <BarChart3 className="h-3.5 w-3.5 shrink-0" />
+              <span>Desempenho & Notas</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onGoView('trainee')}

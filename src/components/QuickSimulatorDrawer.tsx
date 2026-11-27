@@ -796,10 +796,11 @@ export function QuickSimulatorDrawer({
                   type="button"
                   onClick={() => {
                     const l = buildConsultationLinks(selected.proc);
-                    const valor =
-                      selected.tipo === 'Gratuita' ? 'R$ 0,00 (Gratuita)' : 'R$ 89,00';
+                    const isFree = selected.tipo === 'Gratuita';
                     handleForwardResource(
-                      `Olá, ${selected.first}! Segue a Nota Fiscal (${l.nfNumero}) da sua consulta com ${selected.medico}:\n• Valor: ${valor}\n• PDF da NFS-e: ${l.nfLink}`,
+                      isFree
+                        ? `Olá, ${selected.first}! Sua consulta com ${selected.medico} foi na modalidade Gratuita (R$ 0,00), sem cobrança de Nota Fiscal.`
+                        : `Olá, ${selected.first}! Seguem as Notas Fiscais da sua consulta com ${selected.medico} (Total R$ 50,00):\n• NF Médico (${l.nfMedicoNumero} · R$ 45,00): ${l.nfMedicoLink}\n• NF ClickCannabis (${l.nfClickNumero} · R$ 5,00): ${l.nfClickLink}`,
                       'Nota fiscal'
                     );
                   }}

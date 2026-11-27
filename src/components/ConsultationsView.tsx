@@ -7,8 +7,9 @@ import {
   ChevronRight,
   ClipboardCheck,
   Clock,
+  Coins,
   Copy,
-  CreditCard,
+  FileEdit,
   FileText,
   History,
   Home,
@@ -20,6 +21,7 @@ import {
   Settings,
   SlidersHorizontal,
   Stethoscope,
+  Target,
   UserCog,
   UserPlus,
   Users,
@@ -54,7 +56,8 @@ export type ConsultMenuKey =
   | 'dashboard'
   | 'medicos'
   | 'cms'
-  | 'financeiro';
+  | 'financeiro'
+  | 'estrategia';
 
 export type ConsultTipoFilter = 'todos' | 'primeira' | 'recorrente' | 'gratuita';
 
@@ -139,8 +142,14 @@ const MENU_META: Record<
   },
   financeiro: {
     breadcrumb: 'Home / Financeiro',
-    title: 'Financeiro · Notas Fiscais e Consultas',
-    subtitle: 'Emita, copie e encaminhe Notas Fiscais (NFS-e) de consultas pagas e gratuitas.',
+    title: 'Financeiro · Notas Fiscais (Médico R$ 45 + Click R$ 5)',
+    subtitle:
+      'Nas consultas pagas (R$ 50,00), o médico emite NFS-e de R$ 45,00 e a ClickCannabis emite NFS-e de R$ 5,00.',
+  },
+  estrategia: {
+    breadcrumb: 'Home / Estratégia',
+    title: 'Estratégia · Conversão e Capacidade',
+    subtitle: 'Acompanhamento de primeira vez, recorrência, taxa de comparecimento e metas diárias.',
   },
 };
 
@@ -184,6 +193,25 @@ export function ConsultationsView({
   const { today, todayKey } = getTodayMeta();
   const [activeMenu, setActiveMenu] = useState<ConsultMenuKey>('todas');
   const [consultasOpen, setConsultasOpen] = useState(true);
+  const [openGroups, setOpenGroups] = useState<{
+    dashboard: boolean;
+    medicos: boolean;
+    crm: boolean;
+    cms: boolean;
+    financeiro: boolean;
+    estrategia: boolean;
+  }>({
+    dashboard: false,
+    medicos: false,
+    crm: false,
+    cms: false,
+    financeiro: false,
+    estrategia: false,
+  });
+
+  const toggleGroup = (key: keyof typeof openGroups) => {
+    setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const [tagStatus, setTagStatus] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('todos');
@@ -300,7 +328,12 @@ export function ConsultationsView({
         })
       );
     }
-    if (activeMenu === 'anamnese' || activeMenu === 'prontuarios' || activeMenu === 'financeiro') {
+    if (
+      activeMenu === 'anamnese' ||
+      activeMenu === 'prontuarios' ||
+      activeMenu === 'financeiro' ||
+      activeMenu === 'estrategia'
+    ) {
       return applyCommonFilters(rows);
     }
     return applyCommonFilters(rows);
@@ -467,143 +500,381 @@ export function ConsultationsView({
         {/* Left Navigation matching ClickCannabis Consultas ERP */}
         <nav
           aria-label="Menu interno de consultas"
-          className="border-b lg:border-b-0 lg:border-r border-[var(--line)] p-3 flex flex-col gap-0.5 text-xs bg-[var(--surface)]"
+          className="border-b lg:border-b-0 lg:border-r border-[var(--line)] px-3 py-4 flex flex-col gap-1.5 text-[13px] bg-[var(--surface)]"
         >
           <button
             type="button"
             onClick={() => selectMenu('home')}
-            className={`flex items-center gap-2.5 text-left px-3 py-2 rounded-lg font-medium transition-colors ${
+            className={`flex items-center gap-3 text-left px-3 py-2.5 rounded-xl font-medium transition-colors ${
               activeMenu === 'home'
-                ? 'bg-[var(--accent-soft)] font-bold text-[var(--ink)]'
-                : 'hover:bg-[var(--surface-2)] text-[var(--ink)]'
+                ? 'bg-[var(--accent-soft)] font-semibold text-[var(--ink)]'
+                : 'hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--ink)]'
             }`}
           >
-            <Home className="h-3.5 w-3.5 text-[var(--muted)]" />
+            <Home
+              className={`h-4 w-4 shrink-0 ${
+                activeMenu === 'home' ? 'text-[var(--accent)]' : 'text-[var(--muted)]'
+              }`}
+            />
             <span>Home</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setConsultasOpen((o) => !o)}
-            aria-expanded={consultasOpen}
-            className={`flex items-center justify-between px-3 py-2 rounded-lg font-bold transition-colors ${
-              ['todas', 'acompanhar', 'agendadas', 'historico', 'prontuarios', 'anamnese'].includes(
-                activeMenu
-              )
-                ? 'bg-[var(--surface-2)] text-[var(--ink)]'
-                : 'hover:bg-[var(--surface-2)]'
-            }`}
-          >
-            <span className="inline-flex items-center gap-2.5">
-              <FileText className="h-3.5 w-3.5 text-[var(--accent)]" />
-              <span>Consultas</span>
-            </span>
-            {consultasOpen ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
+          {/* Consultas Accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setConsultasOpen((o) => !o)}
+              aria-expanded={consultasOpen}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium transition-colors ${
+                ['todas', 'acompanhar', 'agendadas', 'historico', 'prontuarios', 'anamnese'].includes(
+                  activeMenu
+                )
+                  ? 'bg-[var(--surface-2)] font-semibold text-[var(--ink)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
+              }`}
+            >
+              <span className="inline-flex items-center gap-3">
+                <FileText
+                  className={`h-4 w-4 shrink-0 ${
+                    [
+                      'todas',
+                      'acompanhar',
+                      'agendadas',
+                      'historico',
+                      'prontuarios',
+                      'anamnese',
+                    ].includes(activeMenu)
+                      ? 'text-[var(--accent)]'
+                      : 'text-[var(--muted)]'
+                  }`}
+                />
+                <span>Consultas</span>
+              </span>
+              {consultasOpen ? (
+                <ChevronDown className="h-3.5 w-3.5 text-[var(--muted)]" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+              )}
+            </button>
+
+            {consultasOpen && (
+              <div className="ml-5 pl-3 border-l border-[var(--line)] flex flex-col gap-0.5 my-1 text-xs">
+                {(
+                  [
+                    ['todas', 'Todas as consultas', 'todas-consultas'],
+                    ['acompanhar', 'Acompanhar', undefined],
+                    ['agendadas', 'Consultas Agendadas', undefined],
+                    ['historico', 'Histórico de consultas', undefined],
+                    ['prontuarios', 'Prontuários', undefined],
+                    ['anamnese', 'Anamnese', undefined],
+                  ] as Array<[ConsultMenuKey, string, string | undefined]>
+                ).map(([key, label, coachId]) => {
+                  const isActive = activeMenu === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      data-coach={coachId}
+                      onClick={() => selectMenu(key)}
+                      className={`text-left px-2.5 py-1.5 rounded-r-lg transition-colors ${
+                        isActive
+                          ? 'bg-[var(--surface-2)] font-semibold text-[var(--ink)]'
+                          : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             )}
-          </button>
+          </div>
 
-          {consultasOpen && (
-            <div className="ml-3 pl-2.5 border-l border-[var(--line)] flex flex-col gap-0.5 my-1">
-              {(
-                [
-                  ['todas', 'Todas as consultas', 'todas-consultas'],
-                  ['acompanhar', 'Acompanhar', undefined],
-                  ['agendadas', 'Consultas Agendadas', undefined],
-                  ['historico', 'Histórico de consultas', undefined],
-                  ['prontuarios', 'Prontuários', undefined],
-                  ['anamnese', 'Anamnese', undefined],
-                ] as Array<[ConsultMenuKey, string, string | undefined]>
-              ).map(([key, label, coachId]) => {
-                const isActive = activeMenu === key;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    data-coach={coachId}
-                    onClick={() => selectMenu(key)}
-                    className={`text-left px-2.5 py-1.5 rounded-r-lg transition-colors ${
-                      isActive
-                        ? 'bg-[var(--accent-soft)] font-bold text-[var(--ink)]'
-                        : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {/* Dashboard Accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                selectMenu('dashboard');
+                toggleGroup('dashboard');
+              }}
+              aria-expanded={openGroups.dashboard}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium transition-colors ${
+                activeMenu === 'dashboard'
+                  ? 'bg-[var(--accent-soft)] font-semibold text-[var(--ink)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
+              }`}
+            >
+              <span className="inline-flex items-center gap-3">
+                <BarChart3
+                  className={`h-4 w-4 shrink-0 ${
+                    activeMenu === 'dashboard' ? 'text-[var(--accent)]' : 'text-[var(--muted)]'
+                  }`}
+                />
+                <span>Dashboard</span>
+              </span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-[var(--muted)] transition-transform ${
+                  openGroups.dashboard ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+            {openGroups.dashboard && (
+              <div className="ml-5 pl-3 border-l border-[var(--line)] flex flex-col gap-0.5 my-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => selectMenu('dashboard')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Indicadores Gerais
+                </button>
+                <button
+                  type="button"
+                  onClick={() => jumpToFilteredTodas({ tipo: 'primeira' })}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Primeira vez vs Recorrente
+                </button>
+              </div>
+            )}
+          </div>
 
-          <button
-            type="button"
-            onClick={() => selectMenu('dashboard')}
-            className={`flex items-center gap-2.5 text-left px-3 py-2 rounded-lg font-medium transition-colors ${
-              activeMenu === 'dashboard'
-                ? 'bg-[var(--accent-soft)] font-bold text-[var(--ink)]'
-                : 'hover:bg-[var(--surface-2)] text-[var(--ink)]'
-            }`}
-          >
-            <BarChart3 className="h-3.5 w-3.5 text-[var(--muted)]" />
-            <span>Dashboard</span>
-          </button>
+          {/* Médicos Accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                selectMenu('medicos');
+                toggleGroup('medicos');
+              }}
+              aria-expanded={openGroups.medicos}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium transition-colors ${
+                activeMenu === 'medicos'
+                  ? 'bg-[var(--accent-soft)] font-semibold text-[var(--ink)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
+              }`}
+            >
+              <span className="inline-flex items-center gap-3">
+                <Stethoscope
+                  className={`h-4 w-4 shrink-0 ${
+                    activeMenu === 'medicos' ? 'text-[var(--accent)]' : 'text-[var(--muted)]'
+                  }`}
+                />
+                <span>Médicos</span>
+              </span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-[var(--muted)] transition-transform ${
+                  openGroups.medicos ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+            {openGroups.medicos && (
+              <div className="ml-5 pl-3 border-l border-[var(--line)] flex flex-col gap-0.5 my-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => selectMenu('medicos')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Agenda dos Médicos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAgendaDoc(doctorFilter !== 'todos' ? doctorFilter : allDoctors[0] || MEDS[0]);
+                    setAgendaModalOpen(true);
+                  }}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Horários Livres Hoje
+                </button>
+              </div>
+            )}
+          </div>
 
-          <button
-            type="button"
-            onClick={() => selectMenu('medicos')}
-            className={`flex items-center gap-2.5 text-left px-3 py-2 rounded-lg font-medium transition-colors ${
-              activeMenu === 'medicos'
-                ? 'bg-[var(--accent-soft)] font-bold text-[var(--ink)]'
-                : 'hover:bg-[var(--surface-2)] text-[var(--ink)]'
-            }`}
-          >
-            <Stethoscope className="h-3.5 w-3.5 text-[var(--muted)]" />
-            <span>Médicos</span>
-          </button>
+          {/* CRM Accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => toggleGroup('crm')}
+              aria-expanded={openGroups.crm}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)] transition-colors"
+            >
+              <span className="inline-flex items-center gap-3">
+                <LayoutGrid className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+                <span>CRM</span>
+              </span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-[var(--muted)] transition-transform ${
+                  openGroups.crm ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+            {openGroups.crm && (
+              <div className="ml-5 pl-3 border-l border-[var(--line)] flex flex-col gap-0.5 my-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => onGoView('crm')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Kanban CRM
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onGoView('solicitacoes')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Solicitações & Chat
+                </button>
+              </div>
+            )}
+          </div>
 
-          <button
-            type="button"
-            onClick={() => onGoView('crm')}
-            className="flex items-center gap-2.5 text-left px-3 py-2 rounded-lg hover:bg-[var(--surface-2)] font-medium"
-          >
-            <LayoutGrid className="h-3.5 w-3.5 text-[var(--muted)]" />
-            <span>CRM</span>
-          </button>
+          {/* CMS Accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                selectMenu('cms');
+                toggleGroup('cms');
+              }}
+              aria-expanded={openGroups.cms}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium transition-colors ${
+                activeMenu === 'cms'
+                  ? 'bg-[var(--accent-soft)] font-semibold text-[var(--ink)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
+              }`}
+            >
+              <span className="inline-flex items-center gap-3">
+                <FileEdit
+                  className={`h-4 w-4 shrink-0 ${
+                    activeMenu === 'cms' ? 'text-[var(--accent)]' : 'text-[var(--muted)]'
+                  }`}
+                />
+                <span>CMS</span>
+              </span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-[var(--muted)] transition-transform ${
+                  openGroups.cms ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+            {openGroups.cms && (
+              <div className="ml-5 pl-3 border-l border-[var(--line)] flex flex-col gap-0.5 my-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => selectMenu('cms')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Modelos de Mensagem
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectMenu('cms')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Regras (/importante)
+                </button>
+              </div>
+            )}
+          </div>
 
-          <button
-            type="button"
-            onClick={() => selectMenu('cms')}
-            className={`flex items-center gap-2.5 text-left px-3 py-2 rounded-lg font-medium transition-colors ${
-              activeMenu === 'cms'
-                ? 'bg-[var(--accent-soft)] font-bold text-[var(--ink)]'
-                : 'hover:bg-[var(--surface-2)] text-[var(--ink)]'
-            }`}
-          >
-            <MessageSquare className="h-3.5 w-3.5 text-[var(--muted)]" />
-            <span>CMS</span>
-          </button>
+          {/* Financeiro Accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                selectMenu('financeiro');
+                toggleGroup('financeiro');
+              }}
+              aria-expanded={openGroups.financeiro}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium transition-colors ${
+                activeMenu === 'financeiro'
+                  ? 'bg-[var(--accent-soft)] font-semibold text-[var(--ink)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
+              }`}
+            >
+              <span className="inline-flex items-center gap-3">
+                <Coins
+                  className={`h-4 w-4 shrink-0 ${
+                    activeMenu === 'financeiro' ? 'text-[var(--accent)]' : 'text-[var(--muted)]'
+                  }`}
+                />
+                <span>Financeiro</span>
+              </span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-[var(--muted)] transition-transform ${
+                  openGroups.financeiro ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+            {openGroups.financeiro && (
+              <div className="ml-5 pl-3 border-l border-[var(--line)] flex flex-col gap-0.5 my-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => selectMenu('financeiro')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Notas Fiscais (R$ 45 + R$ 5)
+                </button>
+              </div>
+            )}
+          </div>
 
-          <button
-            type="button"
-            onClick={() => selectMenu('financeiro')}
-            className={`flex items-center gap-2.5 text-left px-3 py-2 rounded-lg font-medium transition-colors ${
-              activeMenu === 'financeiro'
-                ? 'bg-[var(--accent-soft)] font-bold text-[var(--ink)]'
-                : 'hover:bg-[var(--surface-2)] text-[var(--ink)]'
-            }`}
-          >
-            <CreditCard className="h-3.5 w-3.5 text-[var(--muted)]" />
-            <span>Financeiro</span>
-          </button>
+          {/* Estratégia Accordion */}
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                selectMenu('estrategia');
+                toggleGroup('estrategia');
+              }}
+              aria-expanded={openGroups.estrategia}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium transition-colors ${
+                activeMenu === 'estrategia'
+                  ? 'bg-[var(--accent-soft)] font-semibold text-[var(--ink)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
+              }`}
+            >
+              <span className="inline-flex items-center gap-3">
+                <Target
+                  className={`h-4 w-4 shrink-0 ${
+                    activeMenu === 'estrategia' ? 'text-[var(--accent)]' : 'text-[var(--muted)]'
+                  }`}
+                />
+                <span>Estratégia</span>
+              </span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-[var(--muted)] transition-transform ${
+                  openGroups.estrategia ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+            {openGroups.estrategia && (
+              <div className="ml-5 pl-3 border-l border-[var(--line)] flex flex-col gap-0.5 my-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => selectMenu('estrategia')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Metas & Conversão
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectMenu('medicos')}
+                  className="text-left px-2.5 py-1.5 rounded-r-lg text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+                >
+                  Capacidade de Agenda
+                </button>
+              </div>
+            )}
+          </div>
 
-          <div className="mt-3 pt-3 border-t border-[var(--line)] space-y-1">
+          <div className="mt-auto pt-3 border-t border-[var(--line)] space-y-1.5 text-xs">
             {onOpenQuickSim && (
               <button
                 type="button"
                 onClick={() => onOpenQuickSim('confirmacao')}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--accent)] font-semibold text-left"
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--accent)] font-semibold text-left"
               >
                 <Bot className="h-3.5 w-3.5 text-[var(--accent)] shrink-0" />
                 <span>Simular Confirmação</span>
@@ -612,7 +883,7 @@ export function ConsultationsView({
             <button
               type="button"
               onClick={onStartConfirmTour}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] font-semibold text-left hover:brightness-105"
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] font-semibold text-left hover:brightness-105"
             >
               <ClipboardCheck className="h-3.5 w-3.5 shrink-0" />
               <span>Passo a passo Confirmação</span>
@@ -1251,48 +1522,122 @@ export function ConsultationsView({
 
           {/* FINANCEIRO SUBVIEW */}
           {activeMenu === 'financeiro' && (
-            <div className="overflow-x-auto rounded-xl border border-[var(--line)]">
-              <table className="w-full min-w-[640px] text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[var(--surface-2)] text-[var(--muted)] uppercase tracking-wider text-[10px] border-b border-[var(--line)]">
-                    <th className="text-left px-3 py-2.5">Paciente</th>
-                    <th className="text-left px-3 py-2.5">Médico</th>
-                    <th className="text-left px-3 py-2.5">Tipo</th>
-                    <th className="text-left px-3 py-2.5">Valor</th>
-                    <th className="text-right px-3 py-2.5">Nota Fiscal</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--line)]">
-                  {slice.map((r) => {
-                    const isFree = norm(r.tipo).includes('gratuit');
-                    return (
-                      <tr key={r.id} className="hover:bg-[var(--surface-2)]">
-                        <td className="px-3 py-2.5">
-                          <strong className="block">{r.nome}</strong>
-                          <span className="text-[11px] text-[var(--muted)] font-mono-num">
-                            {r.proc}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5">{r.medico}</td>
-                        <td className="px-3 py-2.5">{getTipoDisplay(r.tipo).main}</td>
-                        <td className="px-3 py-2.5 font-mono-num font-semibold">
-                          {isFree ? 'R$ 0,00' : 'R$ 89,00'}
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <button
-                            type="button"
-                            onClick={() => setActiveModal({ type: 'nf', rowId: r.id })}
-                            className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 font-semibold hover:border-[var(--accent)]"
-                          >
-                            <Receipt className="h-3.5 w-3.5 text-[var(--accent)]" />
-                            Emitir / Enviar NF
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="space-y-3 text-xs">
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <strong className="text-[var(--ink)]">
+                    Regra de Emissão NFS-e · ClickCannabis
+                  </strong>
+                  <p className="text-[var(--muted)] mt-0.5">
+                    Consultas pagas (R$ 50,00) geram duas notas: <strong className="text-[var(--ink)]">R$ 45,00</strong> emitida pelo médico e <strong className="text-[var(--ink)]">R$ 5,00</strong> emitida pela ClickCannabis. Consultas gratuitas são isentas (R$ 0,00).
+                  </p>
+                </div>
+                <StatusBadge tone="ok">Médico R$ 45 + Click R$ 5</StatusBadge>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-[var(--line)]">
+                <table className="w-full min-w-[700px] text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-[var(--surface-2)] text-[var(--muted)] uppercase tracking-wider text-[10px] border-b border-[var(--line)]">
+                      <th className="text-left px-3 py-2.5">Paciente</th>
+                      <th className="text-left px-3 py-2.5">Médico</th>
+                      <th className="text-left px-3 py-2.5">Tipo</th>
+                      <th className="text-left px-3 py-2.5">NF Médico</th>
+                      <th className="text-left px-3 py-2.5">NF Click</th>
+                      <th className="text-left px-3 py-2.5">Total</th>
+                      <th className="text-right px-3 py-2.5">Nota Fiscal</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--line)]">
+                    {slice.map((r) => {
+                      const isFree = norm(r.tipo).includes('gratuit');
+                      return (
+                        <tr key={r.id} className="hover:bg-[var(--surface-2)]">
+                          <td className="px-3 py-2.5">
+                            <strong className="block">{r.nome}</strong>
+                            <span className="text-[11px] text-[var(--muted)] font-mono-num">
+                              {r.proc}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5">{r.medico}</td>
+                          <td className="px-3 py-2.5">{getTipoDisplay(r.tipo).main}</td>
+                          <td className="px-3 py-2.5 font-mono-num">
+                            {isFree ? 'R$ 0,00' : 'R$ 45,00'}
+                          </td>
+                          <td className="px-3 py-2.5 font-mono-num">
+                            {isFree ? 'R$ 0,00' : 'R$ 5,00'}
+                          </td>
+                          <td className="px-3 py-2.5 font-mono-num font-bold text-[var(--accent)]">
+                            {isFree ? 'R$ 0,00' : 'R$ 50,00'}
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModal({ type: 'nf', rowId: r.id })}
+                              className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 font-semibold hover:border-[var(--accent)]"
+                            >
+                              <Receipt className="h-3.5 w-3.5 text-[var(--accent)]" />
+                              Emitir / Enviar NFs
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ESTRATÉGIA SUBVIEW */}
+          {activeMenu === 'estrategia' && (
+            <div className="space-y-4 text-xs">
+              <div className="grid sm:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => jumpToFilteredTodas({ status: 'Realizada' })}
+                  className="text-left rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-4 hover:border-[var(--accent)]"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                    Comparecimento (Realizadas)
+                  </span>
+                  <strong className="font-display text-2xl block mt-1 text-[var(--accent)]">
+                    {rows.length ? Math.round((stats.real / rows.length) * 100) : 0}%
+                  </strong>
+                  <span className="text-[11px] text-[var(--muted)] block mt-1">
+                    {stats.real} de {rows.length} consultas concluídas
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => jumpToFilteredTodas({ tipo: 'primeira' })}
+                  className="text-left rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-4 hover:border-[var(--accent)]"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                    Mix Primeira Vez vs Recorrente
+                  </span>
+                  <strong className="font-display text-2xl block mt-1">
+                    {rows.filter((r) => matchesTipoFilter(r.tipo, 'primeira')).length} /{' '}
+                    {rows.filter((r) => matchesTipoFilter(r.tipo, 'recorrente')).length}
+                  </strong>
+                  <span className="text-[11px] text-[var(--muted)] block mt-1">
+                    Clique para filtrar na tabela
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectMenu('financeiro')}
+                  className="text-left rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-4 hover:border-[var(--accent)]"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                    Receita Padrão / NFS-e
+                  </span>
+                  <strong className="font-display text-2xl block mt-1">R$ 50,00</strong>
+                  <span className="text-[11px] text-[var(--muted)] block mt-1">
+                    Médico R$ 45,00 · ClickCannabis R$ 5,00
+                  </span>
+                </button>
+              </div>
             </div>
           )}
 
