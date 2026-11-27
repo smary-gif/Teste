@@ -5,10 +5,10 @@ import {
   onAuthStateChanged,
   signInWithPopup,
   signOut,
+  type Auth,
   type Unsubscribe,
   type User,
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
 import { canonicalPersonKey } from '../data/defaults';
 
 export interface GoogleAuthProfile {
@@ -18,13 +18,19 @@ export interface GoogleAuthProfile {
   photoURL: string | null;
 }
 
+interface FirebaseWebConfig {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId: string;
+}
+
 const SCOPES = [
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
 ];
-
-const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
-const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => provider.addScope(scope));
@@ -33,6 +39,30 @@ provider.setCustomParameters({ prompt: 'select_account' });
 // In-memory access token cache (never persisted in localStorage/sessionStorage)
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
+let authPromise: Promise<Auth | null> | null = null;
+
+async function ensureAuth(): Promise<Auth | null> {
+  if (!authPromise) {
+    authPromise = (async () => {
+      try {
+        const resp = await fetch('/api/auth/firebase-config');
+        if (!resp.ok) return null;
+        const data = (await resp.json()) as {
+          configured?: boolean;
+          config?: FirebaseWebConfig | null;
+        };
+        if (!data.configured || !data.config?.apiKey) {
+          return null;
+        }
+        const app = getApps().length > 0 ? getApps()[0] : initializeApp(data.config);
+        return getAuth(app);
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return authPromise;
+}
 
 function toProfile(user: User): GoogleAuthProfile {
   const email = user.email || '';
@@ -49,20 +79,37 @@ export function initGoogleAuth(
   onUserSignedIn: (profile: GoogleAuthProfile, token: string | null) => void,
   onUserSignedOut: () => void
 ): Unsubscribe {
-  return onAuthStateChanged(auth, (user) => {
-    if (user) {
-      onUserSignedIn(toProfile(user), cachedAccessToken);
-    } else if (!isSigningIn) {
-      cachedAccessToken = null;
-      onUserSignedOut();
-    }
+  let active = true;
+  let innerUnsub: Unsubscribe | null = null;
+
+  void ensureAuth().then((auth) => {
+    if (!active || !auth) return;
+    innerUnsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        onUserSignedIn(toProfile(user), cachedAccessToken);
+      } else if (!isSigningIn) {
+        cachedAccessToken = null;
+        onUserSignedOut();
+      }
+    });
   });
+
+  return () => {
+    active = false;
+    innerUnsub?.();
+  };
 }
 
 export async function signInWithGoogle(): Promise<{
   profile: GoogleAuthProfile;
   accessToken: string | null;
 }> {
+  const auth = await ensureAuth();
+  if (!auth) {
+    const err = new Error('Firebase Auth não configurado') as Error & { code?: string };
+    err.code = 'auth/not-configured';
+    throw err;
+  }
   isSigningIn = true;
   try {
     const result = await signInWithPopup(auth, provider);
@@ -79,7 +126,10 @@ export async function signInWithGoogle(): Promise<{
 
 export async function signOutGoogle(): Promise<void> {
   cachedAccessToken = null;
-  await signOut(auth);
+  const auth = await ensureAuth();
+  if (auth) {
+    await signOut(auth);
+  }
 }
 
 export function getGoogleAccessToken(): string | null {

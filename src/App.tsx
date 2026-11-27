@@ -403,13 +403,15 @@ export default function App() {
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
       const message =
-        code === 'auth/popup-blocked'
-          ? 'Pop-up bloqueado pelo navegador. Permita pop-ups para acessar com o Google.'
-          : code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
-            ? 'Login com Google cancelado antes da conclusão.'
-            : code === 'auth/unauthorized-domain'
-              ? 'Domínio não autorizado nas configurações de autenticação do Google.'
-              : 'Não foi possível concluir o acesso com o Google. Tente novamente.';
+        code === 'auth/not-configured'
+          ? 'Configure a nova chave FIREBASE_API_KEY em Settings > Secrets para reativar o acesso com o Google.'
+          : code === 'auth/popup-blocked'
+            ? 'Pop-up bloqueado pelo navegador. Permita pop-ups para acessar com o Google.'
+            : code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
+              ? 'Login com Google cancelado antes da conclusão.'
+              : code === 'auth/unauthorized-domain'
+                ? 'Domínio não autorizado nas configurações de autenticação do Google.'
+                : 'Não foi possível concluir o acesso com o Google. Tente novamente.';
       setGoogleAuthError(message);
       showToast(message);
     } finally {

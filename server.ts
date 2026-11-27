@@ -56,6 +56,54 @@ async function startServer() {
     res.json({ configured: Boolean(ai) });
   });
 
+  app.get('/api/auth/firebase-config', (_req: Request, res: Response) => {
+    const envApiKey = (process.env.FIREBASE_API_KEY || '').trim();
+    if (envApiKey && envApiKey !== 'MY_FIREBASE_API_KEY') {
+      res.json({
+        configured: true,
+        config: {
+          apiKey: envApiKey,
+          authDomain:
+            (process.env.FIREBASE_AUTH_DOMAIN || '').trim() ||
+            'gen-lang-client-0095658311.firebaseapp.com',
+          projectId:
+            (process.env.FIREBASE_PROJECT_ID || '').trim() || 'gen-lang-client-0095658311',
+          storageBucket:
+            (process.env.FIREBASE_STORAGE_BUCKET || '').trim() ||
+            'gen-lang-client-0095658311.firebasestorage.app',
+          messagingSenderId:
+            (process.env.FIREBASE_MESSAGING_SENDER_ID || '').trim() || '54395473467',
+          appId:
+            (process.env.FIREBASE_APP_ID || '').trim() ||
+            '1:54395473467:web:7898264b116f0a7624561e',
+        },
+      });
+      return;
+    }
+
+    const localCfgPath = path.resolve(__dirname, 'firebase-applet-config.json');
+    if (fs.existsSync(localCfgPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(localCfgPath, 'utf-8')) as {
+          apiKey?: string;
+          authDomain?: string;
+          projectId?: string;
+          storageBucket?: string;
+          messagingSenderId?: string;
+          appId?: string;
+        };
+        if (parsed.apiKey) {
+          res.json({ configured: true, config: parsed });
+          return;
+        }
+      } catch {
+        // fall through to unconfigured response
+      }
+    }
+
+    res.json({ configured: false, config: null });
+  });
+
   app.get('/api/shared/content', (_req: Request, res: Response) => {
     try {
       if (!fs.existsSync(SHARED_CONTENT_FILE)) {
