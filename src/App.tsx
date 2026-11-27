@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AdminView } from './components/AdminView';
 import { CoachOverlay } from './components/CoachOverlay';
+import { ConfirmationBoardView } from './components/ConfirmationBoardView';
 import { ConsultationsView } from './components/ConsultationsView';
 import { CrmView } from './components/CrmView';
 import { GoogleAccessModal } from './components/GoogleSignInButton';
 import { IntegrationTrackView, type TrilhaStore } from './components/IntegrationTrackView';
 import { MentorshipView } from './components/MentorshipView';
 import { NegotiationModal } from './components/NegotiationModal';
+import { PhoneDialerOverlay } from './components/PhoneDialerOverlay';
 import { QuickSimulatorDrawer } from './components/QuickSimulatorDrawer';
 import { ReciclagemView } from './components/ReciclagemView';
 import { ScheduleView } from './components/ScheduleView';
@@ -46,11 +48,13 @@ import type {
   CoachStep,
   ConsultationRow,
   CronoRecord,
+  EditableVideoScript,
   MentorshipChatMsg,
   MentorshipComment,
   PatientCase,
   PortalConfig,
   ReciclagemPersonProgress,
+  SharedPortalContent,
   SolStatus,
   TraineeProgressStore,
 } from './types';
@@ -192,14 +196,37 @@ export default function App() {
   const [voiceProfile, setVoiceProfile] = useState<AiVoiceProfile | null>(() =>
     loadStorage<AiVoiceProfile | null>('ct_ai_voice_profile_v1', null)
   );
+  const [teamSubsectors, setTeamSubsectors] = useState<Record<string, string>>(() =>
+    loadStorage<Record<string, string>>('ct_team_subs_v1', {})
+  );
+  const [videoOverrides, setVideoOverrides] = useState<Record<string, EditableVideoScript>>({});
+  const [sharedSceneAudios, setSharedSceneAudios] = useState<Record<string, string>>({});
+  const [sharedVoiceProfile, setSharedVoiceProfile] = useState<AiVoiceProfile | null>(null);
 
   const handleUpdateVoiceProfile = useCallback((next: AiVoiceProfile | null) => {
     setVoiceProfile(next);
     saveStorage('ct_ai_voice_profile_v1', next);
   }, []);
 
+  const persistSharedContent = useCallback(async (patch: Partial<SharedPortalContent>) => {
+    try {
+      await fetch('/api/shared/content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+    } catch {
+      // ignore offline save failures cleanly
+    }
+  }, []);
+
   const [solDrawerForm, setSolDrawerForm] = useState<SolFormState | null>(null);
   const [crmNegPatientId, setCrmNegPatientId] = useState<string | null>(null);
+  const [pendingCallPatient, setPendingCallPatient] = useState<PatientCase | null>(null);
+  const [dialerState, setDialerState] = useState<{ open: boolean; patient: PatientCase | null }>({
+    open: false,
+    patient: null,
+  });
   const [quickSim, setQuickSim] = useState<{
     open: boolean;
     deptKey?: string;
@@ -236,6 +263,34 @@ export default function App() {
       .then((r) => r.json())
       .then((d: { configured?: boolean }) => setAiConfigured(Boolean(d.configured)))
       .catch(() => setAiConfigured(false));
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/shared/content')
+      .then((r) => r.json())
+      .then((data: SharedPortalContent) => {
+        if (data.cfg) {
+          setCfg((prev) => ({
+            ...prev,
+            ...data.cfg,
+            templates: { ...prev.templates, ...(data.cfg?.templates || {}) },
+          }));
+        }
+        if (data.teamSubsectors) {
+          setTeamSubsectors(data.teamSubsectors);
+          saveStorage('ct_team_subs_v1', data.teamSubsectors);
+        }
+        if (data.videoOverrides) {
+          setVideoOverrides(data.videoOverrides);
+        }
+        if (data.sceneAudioUrls) {
+          setSharedSceneAudios(data.sceneAudioUrls);
+        }
+        if (data.sharedVoiceProfile !== undefined) {
+          setSharedVoiceProfile(data.sharedVoiceProfile);
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   const activeProgress: TraineeProgressStore =
@@ -805,6 +860,89 @@ export default function App() {
     [consultations, handleSignalPractice]
   );
 
+  const handleRequestCall = useCallback((patient: PatientCase) => {
+    setPendingCallPatient(patient);
+  }, []);
+
+  const handleConfirmCall = useCallback(
+    (patient: PatientCase) => {
+      setPendingCallPatient(null);
+      setDialerState({ open: true, patient });
+      showToast(`Ligando para ${patient.nome} (${patient.tel})...`);
+    },
+    [showToast]
+  );
+
+  const handleLogCallResult = useCallback(
+    (patient: PatientCase, outcome: 'Atendeu' | 'Sem resposta', durationSecs: number) => {
+      const mm = Math.floor(durationSecs / 60);
+      const ss = durationSecs % 60;
+      const durLabel = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+      const noteText =
+        outcome === 'Atendeu'
+          ? `Ligação atendida (${durLabel}) para ${patient.tel}`
+          : `Tentativa de ligação sem resposta (${patient.tel})`;
+
+      setPatients((prev) =>
+        prev.map((p) =>
+          p.id !== patient.id
+            ? p
+            : {
+                ...p,
+                notas: [
+                  ...p.notas,
+                  { id: `call_${Date.now()}`, tipo: 'Nota', text: noteText, t: nowTime() },
+                ],
+                msgs: [
+                  ...p.msgs,
+                  { id: `callevt_${Date.now()}`, from: 'evt', text: noteText, t: nowTime() },
+                ],
+              }
+        )
+      );
+      showToast(`${outcome}: ${noteText}`);
+    },
+    [showToast]
+  );
+
+  const handleUpdateConsultationStatusByPatient = useCallback(
+    (patientId: string, nextStatus: string) => {
+      setPatients((prev) =>
+        prev.map((p) =>
+          p.id !== patientId
+            ? p
+            : {
+                ...p,
+                status: nextStatus,
+                msgs: [
+                  ...p.msgs,
+                  {
+                    id: `conf_st_${Date.now()}`,
+                    from: 'evt',
+                    text: `Status da consulta atualizado para "${nextStatus}"`,
+                    t: nowTime(),
+                  },
+                ],
+              }
+        )
+      );
+      handleSyncConsultationFromPatient(patientId, { status: nextStatus });
+    },
+    [handleSyncConsultationFromPatient]
+  );
+
+  const handleChangeMemberSubsector = useCallback(
+    (memberName: string, nextSubsector: string) => {
+      setTeamSubsectors((prev) => {
+        const updated = { ...prev, [memberName]: nextSubsector };
+        saveStorage('ct_team_subs_v1', updated);
+        void persistSharedContent({ teamSubsectors: updated });
+        return updated;
+      });
+    },
+    [persistSharedContent]
+  );
+
   return (
     <div className="min-h-screen flex flex-col md:grid md:grid-cols-[248px_minmax(0,1fr)]">
       <Sidebar
@@ -911,6 +1049,7 @@ export default function App() {
               onSignalPractice={handleSignalPractice}
               onSyncConsultation={handleSyncConsultationFromPatient}
               onCaseEvaluated={handleCaseEvaluated}
+              onStartCall={handleRequestCall}
               onCoachSignal={handleCoachSignal}
               onToast={showToast}
             />
@@ -922,6 +1061,9 @@ export default function App() {
               aiConfigured={aiConfigured}
               speakerName={activeCollaborator}
               voiceProfile={voiceProfile}
+              sharedVoiceProfile={sharedVoiceProfile}
+              videoOverrides={videoOverrides}
+              sharedSceneAudios={sharedSceneAudios}
               onUpdateVoiceProfile={handleUpdateVoiceProfile}
               onStartTour={handleStartTour}
               onOpenQuickSim={handleOpenQuickSim}
@@ -936,6 +1078,19 @@ export default function App() {
               onMoveStatus={handleMoveSolStatus}
               onOpenChat={handleOpenPatientFromOutside}
               onOpenQuickSim={handleOpenQuickSim}
+            />
+          )}
+
+          {view === 'confirmacao' && (
+            <ConfirmationBoardView
+              patients={patients}
+              consultations={consultations}
+              onStartCall={handleRequestCall}
+              onOpenPatientChat={handleOpenPatientFromOutside}
+              onOpenNegotiation={(pid) => setCrmNegPatientId(pid)}
+              onForwardToChat={(pid, text, label) => handleForwardToChat(pid, text, label, false)}
+              onUpdateConsultationStatus={handleUpdateConsultationStatusByPatient}
+              onToast={showToast}
             />
           )}
 
@@ -961,6 +1116,7 @@ export default function App() {
               patients={patients}
               onOpenPatientChat={handleOpenPatientFromOutside}
               onOpenNegotiation={(pid) => setCrmNegPatientId(pid)}
+              onStartCall={handleRequestCall}
               onBackToSim={() => setView('simulacao')}
               onOpenQuickSim={handleOpenQuickSim}
               onToast={showToast}
@@ -1005,6 +1161,8 @@ export default function App() {
               cfg={cfg}
               isAdmin={isAdmin}
               traineeName={activeCollaborator}
+              teamSubsectors={teamSubsectors}
+              onChangeMemberSubsector={handleChangeMemberSubsector}
               commentsByPerson={mentorshipComments}
               onAddComment={(key, comment) => {
                 const updated = {
@@ -1041,6 +1199,20 @@ export default function App() {
             <AdminView
               cfg={cfg}
               onSaveConfig={handleUpdateConfig}
+              teamSubsectors={teamSubsectors}
+              onUpdateTeamSubsectors={(next) => {
+                setTeamSubsectors(next);
+                saveStorage('ct_team_subs_v1', next);
+              }}
+              videoOverrides={videoOverrides}
+              sharedSceneAudios={sharedSceneAudios}
+              sharedVoiceProfile={sharedVoiceProfile}
+              onSaveSharedBundle={async (bundle) => {
+                setVideoOverrides(bundle.videoOverrides);
+                setSharedSceneAudios(bundle.sceneAudioUrls);
+                setSharedVoiceProfile(bundle.sharedVoiceProfile);
+                await persistSharedContent(bundle);
+              }}
               onToast={showToast}
               aiConfigured={aiConfigured}
               speakerName={activeCollaborator}
@@ -1066,6 +1238,7 @@ export default function App() {
         onSignalPractice={handleSignalPractice}
         onSyncConsultation={handleSyncConsultationFromPatient}
         onCaseEvaluated={handleCaseEvaluated}
+        onStartCall={handleRequestCall}
         onToast={showToast}
       />
 
@@ -1087,6 +1260,11 @@ export default function App() {
             patient={crmPatient}
             onClose={() => setCrmNegPatientId(null)}
             onToast={showToast}
+            onStartCall={handleRequestCall}
+            onOpenChat={(pid) => {
+              setCrmNegPatientId(null);
+              handleOpenPatientFromOutside(pid);
+            }}
             onReschedule={(payload) => {
               const dataDash = payload.dataBr.replaceAll('/', '-');
               setPatients((prev) =>
@@ -1223,6 +1401,26 @@ export default function App() {
           />
         );
       })()}
+
+      <PhoneDialerOverlay
+        pendingCallPatient={pendingCallPatient}
+        dialerOpen={dialerState.open}
+        dialerPatient={dialerState.patient}
+        attendantName={activeCollaborator}
+        onCancelConfirm={() => setPendingCallPatient(null)}
+        onConfirmCall={handleConfirmCall}
+        onCloseDialer={() => setDialerState({ open: false, patient: null })}
+        onOpenPatientChat={(pid) => {
+          setDialerState({ open: false, patient: null });
+          handleOpenPatientFromOutside(pid);
+        }}
+        onOpenNegotiation={(pid) => {
+          setDialerState({ open: false, patient: null });
+          setCrmNegPatientId(pid);
+        }}
+        onLogCallResult={handleLogCallResult}
+        onToast={showToast}
+      />
 
       <CoachOverlay
         active={coachState.active}

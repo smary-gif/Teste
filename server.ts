@@ -1,12 +1,15 @@
 import 'dotenv/config';
 import express from 'express';
 import type { Request, Response } from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const SHARED_MEDIA_DIR = path.resolve(__dirname, 'public', 'shared-media');
+const SHARED_CONTENT_FILE = path.join(SHARED_MEDIA_DIR, 'portal-content.json');
 
 const PORT = 3000;
 const MODEL = 'gemini-4-hydrogen';
@@ -43,12 +46,105 @@ function extractApiError(err: unknown): { status: number; message: string } {
 }
 
 async function startServer() {
+  fs.mkdirSync(SHARED_MEDIA_DIR, { recursive: true });
   const app = express();
-  app.use(express.json({ limit: '15mb' }));
+  app.use(express.json({ limit: '25mb' }));
+  app.use('/shared-media', express.static(SHARED_MEDIA_DIR));
 
   app.get('/api/ai/status', (_req: Request, res: Response) => {
     const ai = getAiClient();
     res.json({ configured: Boolean(ai) });
+  });
+
+  app.get('/api/shared/content', (_req: Request, res: Response) => {
+    try {
+      if (!fs.existsSync(SHARED_CONTENT_FILE)) {
+        res.json({});
+        return;
+      }
+      const raw = fs.readFileSync(SHARED_CONTENT_FILE, 'utf-8');
+      res.json(JSON.parse(raw));
+    } catch {
+      res.json({});
+    }
+  });
+
+  app.post('/api/shared/content', (req: Request, res: Response) => {
+    try {
+      fs.mkdirSync(SHARED_MEDIA_DIR, { recursive: true });
+      const existing = fs.existsSync(SHARED_CONTENT_FILE)
+        ? (JSON.parse(fs.readFileSync(SHARED_CONTENT_FILE, 'utf-8')) as Record<string, unknown>)
+        : {};
+      const incoming = (req.body || {}) as Record<string, unknown>;
+      const merged = {
+        ...existing,
+        ...incoming,
+        updatedAt: Date.now(),
+      };
+      fs.writeFileSync(SHARED_CONTENT_FILE, JSON.stringify(merged, null, 2), 'utf-8');
+      res.json(merged);
+    } catch {
+      res.status(500).json({ error: 'Não foi possível salvar os conteúdos compartilhados no servidor.' });
+    }
+  });
+
+  app.post('/api/shared/audio', (req: Request, res: Response) => {
+    const { sceneId, audioBase64, mimeType } = req.body as {
+      sceneId?: string;
+      audioBase64?: string;
+      mimeType?: string;
+    };
+
+    if (!audioBase64 || typeof audioBase64 !== 'string') {
+      res.status(400).json({ error: 'Áudio não enviado.' });
+      return;
+    }
+
+    const safeId = String(sceneId || 'geral')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 40);
+    const cleanMime = typeof mimeType === 'string' ? mimeType.split(';')[0].toLowerCase() : 'audio/webm';
+    const extMap: Record<string, string> = {
+      'audio/mpeg': 'mp3',
+      'audio/mp3': 'mp3',
+      'audio/wav': 'wav',
+      'audio/wave': 'wav',
+      'audio/x-wav': 'wav',
+      'audio/ogg': 'ogg',
+      'audio/mp4': 'm4a',
+      'audio/x-m4a': 'm4a',
+      'audio/aac': 'aac',
+      'audio/webm': 'webm',
+    };
+    const ext = extMap[cleanMime] || 'webm';
+    const fileName = `${safeId}-${Date.now()}.${ext}`;
+    const targetPath = path.join(SHARED_MEDIA_DIR, fileName);
+
+    try {
+      fs.mkdirSync(SHARED_MEDIA_DIR, { recursive: true });
+      const buffer = Buffer.from(audioBase64, 'base64');
+      fs.writeFileSync(targetPath, buffer);
+      res.json({ url: `/shared-media/${fileName}`, fileName });
+    } catch {
+      res.status(500).json({ error: 'Falha ao salvar o arquivo de áudio no servidor.' });
+    }
+  });
+
+  app.delete('/api/shared/audio/:fileName', (req: Request, res: Response) => {
+    const rawName = path.basename(String(req.params.fileName || ''));
+    if (!rawName || rawName === 'portal-content.json') {
+      res.status(400).json({ error: 'Arquivo inválido.' });
+      return;
+    }
+    const targetPath = path.join(SHARED_MEDIA_DIR, rawName);
+    try {
+      if (fs.existsSync(targetPath)) {
+        fs.unlinkSync(targetPath);
+      }
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: 'Erro ao remover o arquivo.' });
+    }
   });
 
   app.post('/api/ai/patient-reply', async (req: Request, res: Response) => {

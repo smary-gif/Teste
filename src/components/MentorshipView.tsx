@@ -13,6 +13,8 @@ interface MentorshipViewProps {
   cfg: PortalConfig;
   isAdmin: boolean;
   traineeName: string;
+  teamSubsectors?: Record<string, string>;
+  onChangeMemberSubsector?: (memberName: string, nextSubsector: string) => void;
   commentsByPerson: Record<string, MentorshipComment[]>;
   onAddComment: (personKey: string, comment: MentorshipComment) => void;
   onDeleteComment: (personKey: string, commentId: string) => void;
@@ -21,6 +23,17 @@ interface MentorshipViewProps {
   onOpenQuickSim?: (deptKey?: string) => void;
   onToast: (msg: string) => void;
 }
+
+const SUBSECTOR_OPTIONS = [
+  'Trainee',
+  'Auditoria',
+  'Chat geral',
+  'Agendamento e reagendamento',
+  'Confirmação',
+  'Suporte aos pacientes',
+  'Suporte aos médicos',
+  'Solicitações',
+];
 
 const COMMENT_TONES: Record<MentorshipComment['tipo'], BadgeTone> = {
   Comentário: 'neutral',
@@ -33,6 +46,8 @@ export function MentorshipView({
   cfg,
   isAdmin,
   traineeName,
+  teamSubsectors = {},
+  onChangeMemberSubsector,
   commentsByPerson,
   onAddComment,
   onDeleteComment,
@@ -41,24 +56,32 @@ export function MentorshipView({
   onOpenQuickSim,
   onToast,
 }: MentorshipViewProps) {
-  const [selectedName, setSelectedName] = useState<string>(EQUIPE[7].nome);
+  const [selectedName, setSelectedName] = useState<string>(EQUIPE[0].nome);
   const [tipo, setTipo] = useState<MentorshipComment['tipo']>('Comentário');
   const [texto, setTexto] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
 
-  const bySub = EQUIPE.reduce<Record<string, typeof EQUIPE>>((acc, m) => {
+  const resolvedMembers = EQUIPE.map((m) => ({
+    ...m,
+    subsetor: teamSubsectors[m.nome] || m.subsetor,
+  }));
+
+  const bySub = resolvedMembers.reduce<Record<string, typeof resolvedMembers>>((acc, m) => {
     (acc[m.subsetor] = acc[m.subsetor] || []).push(m);
     return acc;
   }, {});
 
   const myKey = traineeName.trim() || 'Trainee';
-  const activeMember = isAdmin
-    ? EQUIPE.find((m) => m.nome === selectedName) || EQUIPE[0]
-    : null;
-  const activeKey = isAdmin ? activeMember!.nome : myKey;
-  const displayName = isAdmin ? activeMember!.nome : myKey;
-  const displaySub = isAdmin ? activeMember!.subsetor : 'Programa Trainee (3 Dias)';
+  const activeMember = resolvedMembers.find((m) => m.nome === selectedName) || resolvedMembers[0];
+  const matchedTraineeMember = resolvedMembers.find(
+    (m) => m.nome.toLowerCase() === myKey.toLowerCase() || m.apelido.toLowerCase() === myKey.toLowerCase()
+  );
+  const activeKey = isAdmin ? activeMember.nome : myKey;
+  const displayName = isAdmin ? activeMember.nome : myKey;
+  const displaySub = isAdmin
+    ? activeMember.subsetor
+    : matchedTraineeMember?.subsetor || 'Programa Trainee (3 Dias)';
 
   const comments = commentsByPerson[activeKey] || [];
   const chatMsgs = chatsByPerson[activeKey] || [];
@@ -88,6 +111,11 @@ export function MentorshipView({
     setChatInput('');
   };
 
+  const handleSubsectorUpdate = (memberName: string, nextSub: string) => {
+    onChangeMemberSubsector?.(memberName, nextSub);
+    onToast(`Subsetor de ${memberName} alterado para "${nextSub}".`);
+  };
+
   return (
     <div className="max-w-[1380px] mx-auto space-y-5">
       <div>
@@ -95,7 +123,7 @@ export function MentorshipView({
         <h1 className="text-2xl font-bold mt-0.5">Portal de Apadrinhamento</h1>
         <p className="text-sm text-[var(--muted)] mt-1">
           {isAdmin
-            ? 'Cada colaboradora tem seu espaço individual de feedbacks e acompanhamento.'
+            ? 'Cada colaboradora tem seu espaço individual de feedbacks e você pode trocar os subsetores diretamente na lista.'
             : 'Este é o seu espaço individual com a treinadora de integração.'}
         </p>
       </div>
@@ -110,61 +138,101 @@ export function MentorshipView({
         </p>
       </div>
 
-      <div
-        className={`grid gap-4 items-start ${
-          isAdmin ? 'grid-cols-1 md:grid-cols-[250px_minmax(0,1fr)]' : 'grid-cols-1'
-        }`}
-      >
-        {isAdmin && (
-          <aside className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3 max-h-[680px] overflow-y-auto space-y-3">
-            <h2 className="text-sm font-bold px-1">Colaboradoras</h2>
-            {Object.entries(bySub).map(([sub, members]) => (
-              <div key={sub} className="space-y-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)] px-1">
-                  {sub}
-                </p>
-                {members.map((m) => {
-                  const count = (commentsByPerson[m.nome] || []).length;
-                  const isSel = selectedName === m.nome;
-                  return (
+      <div className="grid gap-4 items-start grid-cols-1 md:grid-cols-[270px_minmax(0,1fr)]">
+        <aside className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3 max-h-[700px] overflow-y-auto space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-sm font-bold">Colaboradoras</h2>
+            <span className="text-[10px] font-semibold text-[var(--muted)]">
+              {resolvedMembers.length} pessoas
+            </span>
+          </div>
+          {Object.entries(bySub).map(([sub, members]) => (
+            <div key={sub} className="space-y-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)] px-1">
+                {sub}
+              </p>
+              {members.map((m) => {
+                const count = (commentsByPerson[m.nome] || []).length;
+                const isSel = selectedName === m.nome;
+                return (
+                  <div
+                    key={m.nome}
+                    className={`rounded-xl border p-2 transition-colors space-y-1.5 ${
+                      isSel
+                        ? 'bg-[var(--accent-soft)] border-[var(--accent)]'
+                        : 'border-transparent hover:bg-[var(--surface-2)]'
+                    }`}
+                  >
                     <button
-                      key={m.nome}
                       type="button"
                       onClick={() => setSelectedName(m.nome)}
-                      className={`w-full flex items-center gap-2.5 text-left rounded-xl border p-2 transition-colors ${
-                        isSel
-                          ? 'bg-[var(--accent-soft)] border-[var(--accent)]'
-                          : 'border-transparent hover:bg-[var(--surface-2)]'
-                      }`}
+                      className="w-full flex items-center gap-2.5 text-left"
                     >
                       <span className="h-7 w-7 rounded-full bg-[var(--sunk)] text-[var(--accent)] font-bold text-[10px] grid place-items-center shrink-0">
                         {initials(m.apelido)}
                       </span>
-                      <span className="min-w-0">
+                      <span className="min-w-0 flex-1">
                         <strong className="text-xs block truncate">{m.apelido}</strong>
                         <span className="text-[11px] text-[var(--muted)] tabular-nums">
                           {count} registro(s)
                         </span>
                       </span>
                     </button>
-                  );
-                })}
-              </div>
-            ))}
-          </aside>
-        )}
+                    {onChangeMemberSubsector && (
+                      <select
+                        value={m.subsetor}
+                        onChange={(e) => handleSubsectorUpdate(m.nome, e.target.value)}
+                        aria-label={`Alterar subsetor de ${m.apelido}`}
+                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] font-medium focus:outline-none focus:border-[var(--accent)]"
+                      >
+                        {Array.from(new Set([...SUBSECTOR_OPTIONS, m.subsetor])).map((opt) => (
+                          <option key={opt} value={opt}>
+                            Subsetor: {opt}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </aside>
 
         <div className="space-y-4">
           <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 flex flex-wrap items-center gap-4">
             <div className="h-14 w-14 rounded-full bg-[var(--accent)] text-[var(--accent-ink)] font-bold text-lg grid place-items-center shrink-0">
               {initials(displayName)}
             </div>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 space-y-1">
               <h2 className="text-lg font-bold truncate">{displayName}</h2>
               <p className="text-xs text-[var(--muted)]">
                 {displaySub} · Treinadora:{' '}
                 <strong className="text-[var(--ink)]">{cfg.madrinha.nome}</strong>
               </p>
+              {onChangeMemberSubsector && (isAdmin || matchedTraineeMember) && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-[11px] font-semibold text-[var(--muted)]">
+                    Subsetor atual:
+                  </span>
+                  <select
+                    value={isAdmin ? activeMember.subsetor : matchedTraineeMember!.subsetor}
+                    onChange={(e) =>
+                      handleSubsectorUpdate(
+                        isAdmin ? activeMember.nome : matchedTraineeMember!.nome,
+                        e.target.value
+                      )
+                    }
+                    className="rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-semibold focus:outline-none focus:border-[var(--accent)]"
+                  >
+                    {SUBSECTOR_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {onOpenQuickSim && (

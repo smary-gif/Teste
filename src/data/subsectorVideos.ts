@@ -16,6 +16,7 @@ export interface SubsectorVideoScene {
   highlights: string[];
   callout: string;
   durationSec: number;
+  audioUrl?: string;
 }
 
 export interface SubsectorVideoScript {
@@ -23,6 +24,7 @@ export interface SubsectorVideoScript {
   title: string;
   subtitle: string;
   totalLabel: string;
+  externalVideoUrl?: string;
   scenes: SubsectorVideoScene[];
 }
 

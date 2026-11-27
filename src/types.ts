@@ -4,6 +4,7 @@ export type AppView =
   | 'simulacao'
   | 'subsetores'
   | 'solicitacoes'
+  | 'confirmacao'
   | 'consultas'
   | 'crm'
   | 'trilha'
@@ -355,3 +356,39 @@ export interface AiVoiceProfile {
   updatedAt: number;
 }
 
+export interface EditableVideoScene {
+  id: string;
+  title: string;
+  screenLabel: string;
+  narration: string;
+  visualType:
+    | 'chat'
+    | 'agendamento'
+    | 'reagendamento'
+    | 'confirmacao'
+    | 'crm'
+    | 'medicos'
+    | 'kanban';
+  highlights: string[];
+  callout: string;
+  durationSec: number;
+  audioUrl?: string;
+}
+
+export interface EditableVideoScript {
+  key: string;
+  title: string;
+  subtitle: string;
+  totalLabel: string;
+  externalVideoUrl?: string;
+  scenes: EditableVideoScene[];
+}
+
+export interface SharedPortalContent {
+  cfg?: PortalConfig;
+  videoOverrides?: Record<string, EditableVideoScript>;
+  sceneAudioUrls?: Record<string, string>;
+  sharedVoiceProfile?: AiVoiceProfile | null;
+  teamSubsectors?: Record<string, string>;
+  updatedAt?: number;
+}

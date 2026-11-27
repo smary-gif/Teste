@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowRight, Bot, Play, Video } from 'lucide-react';
-import type { AiVoiceProfile, PortalConfig } from '../types';
+import type { AiVoiceProfile, EditableVideoScript, PortalConfig } from '../types';
 import { deptKey } from '../utils/helpers';
 import { buildTourSteps } from '../data/tours';
 import { DEFAULT_CONFIG } from '../data/defaults';
@@ -12,6 +12,9 @@ interface SubsectorsViewProps {
   aiConfigured?: boolean;
   speakerName?: string;
   voiceProfile?: AiVoiceProfile | null;
+  sharedVoiceProfile?: AiVoiceProfile | null;
+  videoOverrides?: Record<string, EditableVideoScript>;
+  sharedSceneAudios?: Record<string, string>;
   onUpdateVoiceProfile?: (next: AiVoiceProfile | null) => void;
   onStartTour: (tourKey: string) => void;
   onOpenQuickSim?: (deptKey?: string) => void;
@@ -32,6 +35,9 @@ export function SubsectorsView({
   aiConfigured = false,
   speakerName = 'Colaboradora',
   voiceProfile = null,
+  sharedVoiceProfile = null,
+  videoOverrides = {},
+  sharedSceneAudios = {},
   onUpdateVoiceProfile,
   onStartTour,
   onOpenQuickSim,
@@ -54,7 +60,18 @@ export function SubsectorsView({
   const current = subs[idx];
   const tourKey = current ? current.tour || deptKey(current.nome) : '';
   const hasTour = SUPPORTED_TOURS.has(tourKey) && Boolean(buildTourSteps);
-  const videoScript = tourKey ? SUBSECTOR_VIDEOS[tourKey] : undefined;
+  const videoScript = useMemo(() => {
+    if (!tourKey) return undefined;
+    const base = videoOverrides[tourKey] || SUBSECTOR_VIDEOS[tourKey];
+    if (!base) return undefined;
+    return {
+      ...base,
+      scenes: base.scenes.map((sc) => ({
+        ...sc,
+        audioUrl: sc.audioUrl || sharedSceneAudios[sc.id],
+      })),
+    };
+  }, [tourKey, videoOverrides, sharedSceneAudios]);
   const steps = current
     ? String(current.passos || '')
         .split('\n')
@@ -174,6 +191,8 @@ export function SubsectorsView({
           aiConfigured={aiConfigured}
           speakerName={speakerName}
           voiceProfile={voiceProfile}
+          sharedVoiceProfile={sharedVoiceProfile}
+          sharedSceneAudios={sharedSceneAudios}
           onUpdateVoiceProfile={onUpdateVoiceProfile}
           onPracticeTour={hasTour ? () => onStartTour(tourKey) : undefined}
           onPracticeQuickSim={onOpenQuickSim ? () => onOpenQuickSim(tourKey || 'geral') : undefined}

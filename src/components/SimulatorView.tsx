@@ -71,6 +71,7 @@ interface SimulatorViewProps {
     }
   ) => void;
   onCaseEvaluated?: (approved: boolean) => void;
+  onStartCall?: (patient: PatientCase) => void;
   onCoachSignal: (signalName: string) => void;
   onToast: (msg: string) => void;
 }
@@ -98,6 +99,7 @@ export function SimulatorView({
   onSignalPractice,
   onSyncConsultation,
   onCaseEvaluated,
+  onStartCall,
   onCoachSignal,
   onToast,
 }: SimulatorViewProps) {
@@ -1599,6 +1601,7 @@ export function SimulatorView({
           patient={selected}
           onClose={() => setNegOpen(false)}
           onToast={onToast}
+          onStartCall={onStartCall}
           onReschedule={handleRescheduleSelected}
           onChangeDoctor={handleChangeDoctorSelected}
           onChangeStatus={handleChangeConsultationStatus}

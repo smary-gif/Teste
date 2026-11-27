@@ -59,6 +59,7 @@ interface QuickSimulatorDrawerProps {
     }
   ) => void;
   onCaseEvaluated: (approved: boolean) => void;
+  onStartCall?: (patient: PatientCase) => void;
   onToast: (msg: string) => void;
 }
 
@@ -77,6 +78,7 @@ export function QuickSimulatorDrawer({
   onSignalPractice,
   onSyncConsultation,
   onCaseEvaluated,
+  onStartCall,
   onToast,
 }: QuickSimulatorDrawerProps) {
   const [deptKeyState, setDeptKeyState] = useState<string>(initialDeptKey || 'geral');
@@ -1021,6 +1023,7 @@ export function QuickSimulatorDrawer({
           patient={selected}
           onClose={() => setNegOpen(false)}
           onToast={onToast}
+          onStartCall={onStartCall}
           onReschedule={handleRescheduleSelected}
           onChangeDoctor={handleChangeDoctorSelected}
           onChangeStatus={handleChangeConsultationStatus}

@@ -70,6 +70,7 @@ interface CrmViewProps {
   patients: PatientCase[];
   onOpenPatientChat: (patientId: string) => void;
   onOpenNegotiation?: (patientId: string) => void;
+  onStartCall?: (patient: PatientCase) => void;
   onBackToSim: () => void;
   onOpenQuickSim?: (deptKey?: string, patientId?: string) => void;
   onToast?: (msg: string) => void;
@@ -224,6 +225,7 @@ export function CrmView({
   patients,
   onOpenPatientChat,
   onOpenNegotiation,
+  onStartCall,
   onBackToSim,
   onOpenQuickSim,
   onToast,
@@ -797,6 +799,28 @@ export function CrmView({
                                 <option value="Paciente faltou">Paciente faltou</option>
                               </select>
                             </label>
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {onStartCall && (
+                                <button
+                                  type="button"
+                                  onClick={() => onStartCall(p)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--accent)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+                                >
+                                  <Phone className="h-3 w-3" />
+                                  Ligar
+                                </button>
+                              )}
+                              {onOpenNegotiation && (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenNegotiation(p.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-semibold hover:border-[var(--accent)]"
+                                >
+                                  <FolderOpen className="h-3 w-3 text-[var(--accent)]" />
+                                  Negociação
+                                </button>
+                              )}
+                            </div>
                           </div>
                         )}
 
@@ -828,11 +852,15 @@ export function CrmView({
                             </button>
                             <button
                               type="button"
-                              onClick={() =>
-                                onToast?.(
-                                  `Tentativa de ligação registrada para ${p.nome} (${p.tel}) às ${nowTime()}.`
-                                )
-                              }
+                              onClick={() => {
+                                if (onStartCall) {
+                                  onStartCall(p);
+                                } else {
+                                  onToast?.(
+                                    `Tentativa de ligação registrada para ${p.nome} (${p.tel}) às ${nowTime()}.`
+                                  );
+                                }
+                              }}
                               title={`Ligar para ${p.nome}`}
                               aria-label={`Ligar para ${p.nome}`}
                               className="h-7 w-7 rounded-lg grid place-items-center text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--accent)]"

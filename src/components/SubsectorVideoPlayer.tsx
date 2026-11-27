@@ -34,6 +34,8 @@ interface SubsectorVideoPlayerProps {
   aiConfigured: boolean;
   speakerName?: string;
   voiceProfile?: AiVoiceProfile | null;
+  sharedVoiceProfile?: AiVoiceProfile | null;
+  sharedSceneAudios?: Record<string, string>;
   onUpdateVoiceProfile?: (next: AiVoiceProfile | null) => void;
   onPracticeTour?: () => void;
   onPracticeQuickSim?: () => void;
@@ -188,6 +190,8 @@ export function SubsectorVideoPlayer({
   aiConfigured,
   speakerName = 'Colaboradora',
   voiceProfile = null,
+  sharedVoiceProfile = null,
+  sharedSceneAudios = {},
   onUpdateVoiceProfile,
   onPracticeTour,
   onPracticeQuickSim,
@@ -350,9 +354,11 @@ export function SubsectorVideoPlayer({
 
       // 1. User's own recorded voice always takes top priority
       const customUrl = voiceUrls[scene.id];
-      if (customUrl) {
+      const sharedUrl = scene.audioUrl || sharedSceneAudios[scene.id];
+      const directAudioUrl = customUrl || sharedUrl;
+      if (directAudioUrl) {
         try {
-          const audio = new Audio(customUrl);
+          const audio = new Audio(directAudioUrl);
           audio.playbackRate = speed;
           audioRef.current = audio;
           audio.onended = () => advanceOrFinish(token);
@@ -365,17 +371,22 @@ export function SubsectorVideoPlayer({
         }
       }
 
-      // 2. Natural Gemini neural voice (uses processed trainee voice profile when enabled)
+      // 2. Natural Gemini neural voice (uses trainee voice profile, or shared admin voice profile)
       if (aiConfigured) {
         try {
-          const activeProfile =
+          const chosenVoice =
             voiceProfile && voiceProfile.enabled
-              ? {
-                  matchedBaseVoice: voiceProfile.matchedBaseVoice,
-                  ttsStylePrompt: voiceProfile.ttsStylePrompt,
-                }
-              : null;
-          const cacheKey = `${scene.id}:${activeProfile ? voiceProfile!.updatedAt : 'default'}`;
+              ? voiceProfile
+              : sharedVoiceProfile && sharedVoiceProfile.enabled
+                ? sharedVoiceProfile
+                : null;
+          const activeProfile = chosenVoice
+            ? {
+                matchedBaseVoice: chosenVoice.matchedBaseVoice,
+                ttsStylePrompt: chosenVoice.ttsStylePrompt,
+              }
+            : null;
+          const cacheKey = `${scene.id}:${chosenVoice ? chosenVoice.updatedAt : 'default'}:${scene.narration.length}`;
           let audioSrc = ttsAudioCache.get(cacheKey);
           if (!audioSrc) {
             setLoadingAudio(true);
@@ -428,7 +439,19 @@ export function SubsectorVideoPlayer({
       }
       setLoadingAudio(false);
     };
-  }, [playing, safeIdx, scene, muted, speed, aiConfigured, voiceProfile, voiceUrls, advanceOrFinish]);
+  }, [
+    playing,
+    safeIdx,
+    scene,
+    muted,
+    speed,
+    aiConfigured,
+    voiceProfile,
+    sharedVoiceProfile,
+    sharedSceneAudios,
+    voiceUrls,
+    advanceOrFinish,
+  ]);
 
   const handleTogglePlay = () => {
     if (playing) {
@@ -617,8 +640,14 @@ export function SubsectorVideoPlayer({
       const canvasStream = canvas.captureStream(24);
       const decodedBuffers = new Map<string, AudioBuffer>();
 
-      // Mux user's recorded voices (or cached AI TTS) directly into exported video when available
-      const hasAnyAudio = scenes.some((sc) => voiceBlobs[sc.id] || ttsAudioCache.has(sc.id));
+      // Mux user's recorded voices, shared official audio, or cached AI TTS directly into exported video
+      const hasAnyAudio = scenes.some(
+        (sc) =>
+          voiceBlobs[sc.id] ||
+          sc.audioUrl ||
+          sharedSceneAudios[sc.id] ||
+          ttsAudioCache.has(sc.id)
+      );
       let combinedStream: MediaStream = canvasStream;
       let audioDest: MediaStreamAudioDestinationNode | null = null;
 
@@ -628,10 +657,14 @@ export function SubsectorVideoPlayer({
           audioDest = audioCtx.createMediaStreamDestination();
           for (const sc of scenes) {
             const customBlob = voiceBlobs[sc.id];
+            const sharedAudioUrl = sc.audioUrl || sharedSceneAudios[sc.id];
             const cachedDataUrl = ttsAudioCache.get(sc.id);
             let arrBuf: ArrayBuffer | null = null;
             if (customBlob) {
               arrBuf = await customBlob.arrayBuffer();
+            } else if (sharedAudioUrl) {
+              const res = await fetch(sharedAudioUrl);
+              if (res.ok) arrBuf = await res.arrayBuffer();
             } else if (cachedDataUrl) {
               const res = await fetch(cachedDataUrl);
               arrBuf = await res.arrayBuffer();
@@ -721,6 +754,8 @@ export function SubsectorVideoPlayer({
   if (!scene) return null;
 
   const sceneHasCustomVoice = Boolean(voiceUrls[scene.id]);
+  const sceneSharedAudioUrl = scene.audioUrl || sharedSceneAudios[scene.id];
+  const sceneHasSharedAudio = Boolean(sceneSharedAudioUrl);
   const isRecordingCurrent = recordingSceneId === scene.id;
   const sceneProgressPct = Math.min(100, Math.round((elapsedSec / scene.durationSec) * 100));
   const totalPct = Math.round(((safeIdx + sceneProgressPct / 100) / scenes.length) * 100);
@@ -744,6 +779,7 @@ export function SubsectorVideoPlayer({
           <span className="text-[11px] font-bold text-[var(--accent)]">
             Videoaula Explicativa · {script.totalLabel}
             {recordedCount > 0 && ` · ${recordedCount}/${scenes.length} com sua voz`}
+            {sceneHasSharedAudio && !sceneHasCustomVoice && ' · Áudio oficial compartilhado'}
             {voiceProfile?.enabled && ' · Voz IA personalizada ativa'}
           </span>
           <h3 className="text-base font-bold mt-0.5">{script.title}</h3>
@@ -793,6 +829,23 @@ export function SubsectorVideoPlayer({
         </div>
       </div>
 
+      {script.externalVideoUrl && (
+        <div className="px-5 py-2.5 bg-[var(--accent-soft)] border-b border-[var(--line)] flex flex-wrap items-center justify-between gap-2 text-xs">
+          <span className="font-semibold text-[var(--ink)]">
+            Vídeo complementar cadastrado pela coordenação:
+          </span>
+          <a
+            href={script.externalVideoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] px-3 py-1 font-semibold hover:brightness-105"
+          >
+            <Play className="h-3 w-3" />
+            Abrir vídeo externo
+          </a>
+        </div>
+      )}
+
       {/* 16:9 Cinema Frame */}
       <div ref={stageRef} className="bg-[#0b2115] text-[#eef8f1] flex flex-col">
         <div className="relative aspect-video w-full p-4 md:p-7 flex flex-col justify-between bg-[radial-gradient(circle_at_top_right,rgba(76,199,122,0.16),transparent_55%)]">
@@ -800,12 +853,17 @@ export function SubsectorVideoPlayer({
           <div className="flex items-center justify-between gap-3">
             <ClickCannabisLogo onDark subtitle={scene.screenLabel} />
             <div className="flex items-center gap-2 text-xs font-mono-num text-[#cbead2]">
-              {sceneHasCustomVoice && (
+              {sceneHasCustomVoice ? (
                 <span className="inline-flex items-center gap-1 rounded-md bg-[rgba(76,199,122,0.2)] border border-[rgba(143,232,156,0.4)] px-2 py-0.5 text-[11px] text-[#8fe89c]">
                   <Mic className="h-3 w-3" />
                   <span>Sua voz</span>
                 </span>
-              )}
+              ) : sceneHasSharedAudio ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-[rgba(76,199,122,0.2)] border border-[rgba(143,232,156,0.4)] px-2 py-0.5 text-[11px] text-[#8fe89c]">
+                  <Volume2 className="h-3 w-3" />
+                  <span>Áudio oficial</span>
+                </span>
+              ) : null}
               {loadingAudio && (
                 <span className="inline-flex items-center gap-1 text-[#8fe89c]">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />

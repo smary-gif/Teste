@@ -3,6 +3,7 @@ import {
   Award,
   Bot,
   Calendar,
+  CheckCircle2,
   Columns3,
   Heart,
   LayoutList,
@@ -86,6 +87,11 @@ const NAV_ITEMS: NavItemDef[] = [
     label: 'Solicitações',
     icon: <Columns3 className="h-4 w-4 shrink-0" />,
     section: 'Operação Simulada',
+  },
+  {
+    id: 'confirmacao',
+    label: 'Confirmação',
+    icon: <CheckCircle2 className="h-4 w-4 shrink-0" />,
   },
   {
     id: 'consultas',
