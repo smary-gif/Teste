@@ -41,6 +41,7 @@ export function getConsultationTone(status: string): BadgeTone {
       return 'warn';
     case 'Faltou':
     case 'Não realizada':
+    case 'Cancelada':
       return 'bad';
     default:
       return 'neutral';

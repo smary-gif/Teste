@@ -1,5 +1,6 @@
 export type AppView =
   | 'trainee'
+  | 'reciclagem'
   | 'simulacao'
   | 'subsetores'
   | 'solicitacoes'
@@ -48,9 +49,17 @@ export interface CareerLevel {
   desc: string;
 }
 
+export interface LeadershipHierarchy {
+  coordenadora: string;
+  lideranca: string;
+  liderancaTreinamento: string;
+  treinadora?: string;
+}
+
 export interface PortalConfig {
   portalNome: string;
   portalSub: string;
+  lideranca?: LeadershipHierarchy;
   madrinha: {
     nome: string;
     cargo: string;
@@ -225,6 +234,18 @@ export interface TraineeProgressStore {
   tries: Partial<Record<TraineeStageKey, number>>;
   date: Partial<Record<TraineeStageKey, string>>;
   simSignals: Record<string, boolean>;
+  aiCasesEvaluated?: number;
+  aiCasesApproved?: number;
+}
+
+export interface TraineeSummary {
+  currentStageLabel: string;
+  completedStages: number;
+  totalStages: number;
+  practicesDone: number;
+  totalPractices: number;
+  trilhaPct: number;
+  aiCasesApproved: number;
 }
 
 export interface TrilhaStage {
@@ -282,3 +303,55 @@ export interface CoachStep {
   check?: (value: string) => boolean;
   view?: AppView;
 }
+
+export type TenureBracket =
+  | 'veterana_1a'
+  | 'plena_6m'
+  | 'intermediaria_3m'
+  | 'recente';
+
+export type ReciclagemStatus = 'Pendente' | 'Em reciclagem' | 'Aprovada' | 'Vencida';
+
+export interface ReciclagemModuleDef {
+  id: string;
+  ordem: string;
+  titulo: string;
+  foco: string;
+  deptKey: string;
+  atualizacoes: string[];
+  checklist: Array<{ id: string; text: string; hint: string }>;
+}
+
+export interface ReciclagemCalibrationPoint {
+  id: string;
+  tema: string;
+  observacao: string;
+  autor: string;
+  data: string;
+  resolvido: boolean;
+}
+
+export interface ReciclagemPersonProgress {
+  tenure: TenureBracket;
+  subsetorPrincipal: string;
+  ciclo: string;
+  checklist: Record<string, boolean>;
+  examBest?: number;
+  examTries: number;
+  examDate?: string;
+  calibracoes: ReciclagemCalibrationPoint[];
+  obsLideranca?: string;
+}
+
+export interface AiVoiceProfile {
+  enabled: boolean;
+  speakerName: string;
+  transcript: string;
+  timbre: string;
+  pace: string;
+  matchedBaseVoice: string;
+  ttsStylePrompt: string;
+  summary: string;
+  updatedAt: number;
+}
+

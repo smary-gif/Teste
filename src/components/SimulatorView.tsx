@@ -1,14 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Calendar,
   ChevronDown,
+  CheckCircle2,
   Columns3,
   FolderOpen,
+  Link2,
   ListChecks,
+  Lock,
   Mic,
   Monitor,
+  Receipt,
   RotateCcw,
   Send,
   Sparkles,
+  Users,
   X,
 } from 'lucide-react';
 import { PHASE_TXT, SCRIPT_CONF } from '../data/defaults';
@@ -28,10 +34,14 @@ import {
   findShortcut,
   getTodayMeta,
   initials,
+  isConversationClosed,
+  isOperatorClosingMessage,
+  isPatientClosingReply,
   normCmd,
   nowTime,
   shortDept,
 } from '../utils/helpers';
+import { buildConsultationLinks } from './ConsultationModals';
 import { NegotiationModal } from './NegotiationModal';
 import { getAtendTone, getConsultationTone, StatusBadge } from './StatusBadge';
 
@@ -50,6 +60,17 @@ interface SimulatorViewProps {
   onGoView: (view: AppView) => void;
   onOpenSolModal: (patientId: string, mode: 'new' | 'edit') => void;
   onSignalPractice: (signalId: string) => void;
+  onSyncConsultation?: (
+    patientId: string,
+    patch: {
+      dateKey?: string;
+      dataBr?: string;
+      hora?: string;
+      medico?: string;
+      status?: string;
+    }
+  ) => void;
+  onCaseEvaluated?: (approved: boolean) => void;
   onCoachSignal: (signalName: string) => void;
   onToast: (msg: string) => void;
 }
@@ -75,6 +96,8 @@ export function SimulatorView({
   onGoView,
   onOpenSolModal,
   onSignalPractice,
+  onSyncConsultation,
+  onCaseEvaluated,
   onCoachSignal,
   onToast,
 }: SimulatorViewProps) {
@@ -128,7 +151,19 @@ export function SimulatorView({
     setPatients((prev) => prev.map((p) => (p.id === id ? updater(p) : p)));
   };
 
-  const getScriptedReply = (p: PatientCase): { text: string; nextIdx: Record<string, number> } => {
+  const signalDeptCompletion = (dept: string) => {
+    if (dept === 'geral') onSignalPractice('d1_0');
+    if (dept === 'agendamento') onSignalPractice('d1_1');
+    if (dept === 'reagendamento') onSignalPractice('d1_2');
+    if (dept === 'confirmacao') onSignalPractice('d2_0');
+    if (dept === 'andamento') onSignalPractice('d2_1');
+    if (dept === 'medicos') onSignalPractice('d2_2');
+    if (dept === 'solicitacoes') onSignalPractice('d3_0');
+  };
+
+  const getScriptedReply = (
+    p: PatientCase
+  ): { text: string; nextIdx: Record<string, number>; isLast: boolean } => {
     const idxMap = { ...(p.scriptIdx || {}) };
     if (p.key === 'confirmacao' || (SCRIPT_CONF[p.sc.id || ''] && !p.sc.replies)) {
       const sc = SCRIPT_CONF[p.sc.id || ''] || SCRIPT_CONF.tranquilo;
@@ -139,6 +174,7 @@ export function SimulatorView({
       return {
         text: next < arr.length ? arr[next] : sc.livre[0] || 'Ok, obrigado!',
         nextIdx: idxMap,
+        isLast: next >= arr.length - 1,
       };
     }
     const arr = p.sc.replies || ['Ok, obrigado!'];
@@ -147,10 +183,13 @@ export function SimulatorView({
     return {
       text: arr[Math.min(next, arr.length - 1)],
       nextIdx: idxMap,
+      isLast: next >= arr.length - 1,
     };
   };
 
-  const triggerPatientReply = async (targetCase: PatientCase) => {
+  const triggerPatientReply = async (targetCase: PatientCase, operatorClosed = false) => {
+    if (isConversationClosed(targetCase.atend)) return;
+
     if (
       targetCase.sc.silent &&
       targetCase.opCount < targetCase.sc.silent + (targetCase.key === 'andamento' ? 1 : 0)
@@ -194,14 +233,35 @@ export function SimulatorView({
         }
 
         const reply = (data.reply || '').trim();
-        updatePatient(targetCase.id, (p) => ({
-          ...p,
-          typing: false,
-          unread: p.id !== selectedId,
-          msgs: reply
-            ? [...p.msgs, { id: nextMsgId(), from: 'pac', text: reply, t: nowTime() }]
-            : p.msgs,
-        }));
+        const shouldClose = isPatientClosingReply(reply, false, operatorClosed);
+
+        updatePatient(targetCase.id, (p) => {
+          if (isConversationClosed(p.atend)) return { ...p, typing: false };
+          const msgs = [...p.msgs];
+          if (reply) {
+            msgs.push({ id: nextMsgId(), from: 'pac', text: reply, t: nowTime() });
+          }
+          if (shouldClose) {
+            msgs.push({
+              id: nextMsgId(),
+              from: 'evt',
+              text: 'Atendimento concluído · Conversa encerrada automaticamente.',
+              t: nowTime(),
+            });
+          }
+          return {
+            ...p,
+            typing: false,
+            unread: p.id !== selectedId,
+            atend: shouldClose ? 'Resolvido' : p.atend,
+            msgs,
+          };
+        });
+
+        if (shouldClose) {
+          signalDeptCompletion(targetCase.key);
+          onToast('Atendimento concluído e conversa encerrada automaticamente.');
+        }
       } catch (err) {
         if ((err as Error)?.name === 'AbortError') return;
         updatePatient(targetCase.id, (p) => ({ ...p, typing: false }));
@@ -213,25 +273,88 @@ export function SimulatorView({
     window.setTimeout(() => {
       if (ctl.signal.aborted) return;
       const scripted = getScriptedReply(targetCase);
-      updatePatient(targetCase.id, (p) => ({
-        ...p,
-        typing: false,
-        scriptIdx: scripted.nextIdx,
-        unread: p.id !== selectedId,
-        msgs: [
+      const shouldClose = isPatientClosingReply(
+        scripted.text,
+        scripted.isLast && targetCase.opCount >= 1,
+        operatorClosed
+      );
+      updatePatient(targetCase.id, (p) => {
+        if (isConversationClosed(p.atend)) return { ...p, typing: false };
+        const msgs = [
           ...p.msgs,
-          { id: nextMsgId(), from: 'pac', text: scripted.text, t: nowTime() },
-        ],
-      }));
+          { id: nextMsgId(), from: 'pac' as const, text: scripted.text, t: nowTime() },
+        ];
+        if (shouldClose) {
+          msgs.push({
+            id: nextMsgId(),
+            from: 'evt' as const,
+            text: 'Atendimento concluído · Conversa encerrada automaticamente.',
+            t: nowTime(),
+          });
+        }
+        return {
+          ...p,
+          typing: false,
+          scriptIdx: scripted.nextIdx,
+          unread: p.id !== selectedId,
+          atend: shouldClose ? 'Resolvido' : p.atend,
+          msgs,
+        };
+      });
+      if (shouldClose) {
+        signalDeptCompletion(targetCase.key);
+        onToast('Atendimento concluído e conversa encerrada automaticamente.');
+      }
     }, 750);
   };
 
+  const handleConcludeConversation = () => {
+    if (!selected || isConversationClosed(selected.atend)) return;
+    abortMapRef.current[selected.id]?.abort();
+    updatePatient(selected.id, (p) => ({
+      ...p,
+      typing: false,
+      atend: 'Resolvido',
+      msgs: [
+        ...p.msgs,
+        {
+          id: nextMsgId(),
+          from: 'evt',
+          text: 'Atendimento concluído pela colaboradora · Conversa encerrada.',
+          t: nowTime(),
+        },
+      ],
+    }));
+    signalDeptCompletion(selected.key);
+    onToast('Atendimento concluído e conversa encerrada.');
+  };
+
+  const handleReopenConversation = () => {
+    if (!selected) return;
+    updatePatient(selected.id, (p) => ({
+      ...p,
+      atend: 'Em Atendimento',
+      msgs: [
+        ...p.msgs,
+        {
+          id: nextMsgId(),
+          from: 'evt',
+          text: 'Conversa reaberta pela colaboradora.',
+          t: nowTime(),
+        },
+      ],
+    }));
+    onToast('Atendimento reaberto.');
+  };
+
   const handleSendMessage = () => {
-    if (!selected || !composer.trim()) return;
+    if (!selected || !composer.trim() || isConversationClosed(selected.atend)) return;
     const raw = composer.trim();
     const shortcut = raw.startsWith('/') ? findShortcut(cfg.atalhos, raw) : undefined;
     const text = shortcut ? fillTemplate(shortcut.texto, selected) : raw;
     const cmd = shortcut ? normCmd(shortcut.cmd) : null;
+    const opClosed = isOperatorClosingMessage(text, cmd);
+    const immediateClose = cmd === '/faltou' || (opClosed && Boolean(selected.sc.silent));
 
     const newMsg = {
       id: nextMsgId(),
@@ -245,7 +368,19 @@ export function SimulatorView({
       ...selected,
       opCount: selected.opCount + 1,
       status: cmd === '/confirmacao' ? 'Confirmada' : selected.status,
-      msgs: [...selected.msgs, newMsg],
+      atend: immediateClose ? 'Resolvido' : selected.atend,
+      msgs: immediateClose
+        ? [
+            ...selected.msgs,
+            newMsg,
+            {
+              id: nextMsgId(),
+              from: 'evt',
+              text: 'Atendimento concluído · Conversa encerrada automaticamente.',
+              t: nowTime(),
+            },
+          ]
+        : [...selected.msgs, newMsg],
     };
 
     updatePatient(selected.id, () => nextCase);
@@ -261,7 +396,13 @@ export function SimulatorView({
     }
     if (selected.key === 'medicos') onSignalPractice('d2_2');
 
-    void triggerPatientReply(nextCase);
+    if (immediateClose) {
+      signalDeptCompletion(selected.key);
+      onToast('Atendimento concluído e conversa encerrada automaticamente.');
+      return;
+    }
+
+    void triggerPatientReply(nextCase, opClosed);
   };
 
   const handleFireEvent = (target: PatientCase) => {
@@ -370,21 +511,28 @@ export function SimulatorView({
     if (!selected) return;
     setAtendOpen(false);
     if (selected.atend !== nextAtend) {
+      const closing = isConversationClosed(nextAtend);
+      if (closing) {
+        abortMapRef.current[selected.id]?.abort();
+      }
       updatePatient(selected.id, (p) => ({
         ...p,
+        typing: closing ? false : p.typing,
         atend: nextAtend,
         msgs: [
           ...p.msgs,
           {
             id: nextMsgId(),
             from: 'evt',
-            text: `Status do atendimento: ${p.atend} → ${nextAtend}`,
+            text: closing
+              ? `Status: ${nextAtend} · Conversa encerrada.`
+              : `Status do atendimento: ${p.atend} → ${nextAtend}`,
             t: nowTime(),
           },
         ],
       }));
-      if (selected.key === 'geral' && nextAtend === 'Resolvido') {
-        onSignalPractice('d1_0');
+      if (closing) {
+        signalDeptCompletion(selected.key);
       }
       if (ATEND_TAB[nextAtend] !== ATEND_TAB[selected.atend]) {
         const labels = {
@@ -392,7 +540,11 @@ export function SimulatorView({
           aguardando: 'Aguardando',
           finalizados: 'Finalizados',
         };
-        onToast(`Chat movido para "${labels[ATEND_TAB[nextAtend]]}".`);
+        onToast(
+          closing
+            ? 'Atendimento concluído e conversa encerrada.'
+            : `Chat movido para "${labels[ATEND_TAB[nextAtend]]}".`
+        );
       }
     }
   };
@@ -421,6 +573,149 @@ export function SimulatorView({
     }
   };
 
+  const handleForwardResource = (text: string, label: string) => {
+    if (!selected) return;
+    const newMsg = {
+      id: nextMsgId(),
+      from: 'op' as const,
+      text,
+      label,
+      t: nowTime(),
+    };
+    const nextCase: PatientCase = {
+      ...selected,
+      opCount: selected.opCount + 1,
+      msgs: [...selected.msgs, newMsg],
+    };
+    updatePatient(selected.id, () => nextCase);
+    onToast(`${label} encaminhado no chat de ${selected.first}.`);
+    if (!isConversationClosed(selected.atend)) {
+      void triggerPatientReply(nextCase, false);
+    }
+  };
+
+  const handleRescheduleSelected = (payload: {
+    dateKey: string;
+    dataBr: string;
+    hora: string;
+    medico: string;
+    sendToChat: boolean;
+  }) => {
+    if (!selected) return;
+    const dataDash = payload.dataBr.replaceAll('/', '-');
+    const extraMsgs = [
+      ...selected.msgs,
+      {
+        id: nextMsgId(),
+        from: 'evt' as const,
+        text: `Reagendamento: ${payload.dataBr} às ${payload.hora} · ${payload.medico}`,
+        t: nowTime(),
+      },
+    ];
+    if (payload.sendToChat) {
+      extraMsgs.push({
+        id: nextMsgId(),
+        from: 'op' as const,
+        label: 'Reagendamento confirmado',
+        text: `Sua consulta foi reagendada para ${payload.dataBr} às ${payload.hora} com ${payload.medico}. Qualquer dúvida estamos à disposição!`,
+        t: nowTime(),
+      });
+    }
+    const nextCase: PatientCase = {
+      ...selected,
+      data: dataDash,
+      hora: payload.hora,
+      medico: payload.medico,
+      status: 'Reagendada',
+      opCount: payload.sendToChat ? selected.opCount + 1 : selected.opCount,
+      msgs: extraMsgs,
+    };
+    updatePatient(selected.id, () => nextCase);
+    onSyncConsultation?.(selected.id, {
+      dateKey: payload.dateKey,
+      dataBr: payload.dataBr,
+      hora: payload.hora,
+      medico: payload.medico,
+      status: 'Reagendada',
+    });
+    onSignalPractice('d1_2');
+    onToast(`Consulta reagendada para ${payload.dataBr} às ${payload.hora}.`);
+    if (payload.sendToChat && !isConversationClosed(selected.atend)) {
+      void triggerPatientReply(nextCase, false);
+    }
+  };
+
+  const handleChangeDoctorSelected = (medico: string, sendToChat: boolean) => {
+    if (!selected) return;
+    const extraMsgs = [
+      ...selected.msgs,
+      {
+        id: nextMsgId(),
+        from: 'evt' as const,
+        text: `Médico alterado para ${medico}`,
+        t: nowTime(),
+      },
+    ];
+    if (sendToChat) {
+      extraMsgs.push({
+        id: nextMsgId(),
+        from: 'op' as const,
+        label: 'Alteração de médico',
+        text: `Informamos que sua consulta foi atualizada para atendimento com ${medico}, mantendo o mesmo dia e horário (${selected.data.replaceAll('-', '/')} às ${selected.hora}).`,
+        t: nowTime(),
+      });
+    }
+    const nextCase: PatientCase = {
+      ...selected,
+      medico,
+      opCount: sendToChat ? selected.opCount + 1 : selected.opCount,
+      msgs: extraMsgs,
+    };
+    updatePatient(selected.id, () => nextCase);
+    onSyncConsultation?.(selected.id, { medico });
+    onToast(`Médico atualizado para ${medico}.`);
+  };
+
+  const handleChangeConsultationStatus = (nextStatus: string, sendToChat?: boolean) => {
+    if (!selected) return;
+    const extraMsgs = [
+      ...selected.msgs,
+      {
+        id: nextMsgId(),
+        from: 'evt' as const,
+        text: `Status da consulta alterado para "${nextStatus}"`,
+        t: nowTime(),
+      },
+    ];
+    if (sendToChat && nextStatus === 'Confirmada') {
+      extraMsgs.push({
+        id: nextMsgId(),
+        from: 'op' as const,
+        label: 'Agendamento confirmado',
+        text: `Sua consulta de ${selected.data.replaceAll('-', '/')} às ${selected.hora} com ${selected.medico} está confirmada! 10 minutos antes enviaremos o link de acesso.`,
+        t: nowTime(),
+      });
+      if (selected.key === 'confirmacao') onSignalPractice('d2_0');
+    }
+    updatePatient(selected.id, (p) => ({
+      ...p,
+      status: nextStatus,
+      opCount: sendToChat && nextStatus === 'Confirmada' ? p.opCount + 1 : p.opCount,
+      msgs: extraMsgs,
+    }));
+    onSyncConsultation?.(selected.id, { status: nextStatus });
+    onToast(`Status da consulta atualizado para ${nextStatus}.`);
+  };
+
+  const handleAddNoteFromModal = (text: string, tipo = 'Nota') => {
+    if (!selected || !text.trim()) return;
+    updatePatient(selected.id, (p) => ({
+      ...p,
+      notas: [...p.notas, { id: nextMsgId(), tipo, text: text.trim(), t: nowTime() }],
+    }));
+    onToast('Nota adicionada no atendimento.');
+  };
+
   const handleEvaluateWithAi = async () => {
     if (!selected || evaluating) return;
     setEvaluating(true);
@@ -446,7 +741,10 @@ export function SimulatorView({
       if (!res.ok) {
         setEvalFeedback(data.error || 'Não foi possível avaliar com IA.');
       } else {
-        setEvalFeedback(data.feedback || 'Sem parecer retornado.');
+        const fb = data.feedback || 'Sem parecer retornado.';
+        setEvalFeedback(fb);
+        const approved = /aprovado no caso/i.test(fb) && !/precisa ajustar/i.test(fb);
+        onCaseEvaluated?.(approved);
       }
     } catch {
       setEvalFeedback('Erro de rede ao solicitar avaliação por IA.');
@@ -751,14 +1049,25 @@ export function SimulatorView({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {!selected.isMed && (
                     <StatusBadge tone={getConsultationTone(selected.status)}>
                       {selected.status}
                     </StatusBadge>
                   )}
 
-                  {selected.key === 'confirmacao' && nextConfirmEvent && (
+                  {!isConversationClosed(selected.atend) && (
+                    <button
+                      type="button"
+                      onClick={handleConcludeConversation}
+                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] px-2.5 py-1 text-xs font-semibold hover:brightness-95 whitespace-nowrap"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Concluir atendimento
+                    </button>
+                  )}
+
+                  {selected.key === 'confirmacao' && nextConfirmEvent && !isConversationClosed(selected.atend) && (
                     <button
                       type="button"
                       id="next-ev"
@@ -869,51 +1178,82 @@ export function SimulatorView({
                 <div ref={msgsEndRef} />
               </div>
 
-              <div className="p-2.5 border-t border-[var(--line)] flex items-end gap-2 relative bg-[var(--surface)] shrink-0">
-                {showSuggestions && matchingShortcuts.length > 0 && (
-                  <div className="absolute left-2.5 right-2.5 bottom-full mb-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-xl max-h-60 overflow-y-auto z-20 divide-y divide-[var(--line)]">
-                    {matchingShortcuts.map((a, idx) => (
-                      <button
-                        key={a.cmd}
-                        type="button"
-                        onClick={() => setComposer(a.cmd)}
-                        className={`w-full text-left px-3 py-2 text-xs ${
-                          idx === suggIdx ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--surface-2)]'
-                        }`}
-                      >
-                        <span className="font-mono-num font-bold text-[var(--accent)]">
-                          {a.cmd}
-                        </span>
-                        <span className="block text-[var(--muted)] truncate mt-0.5">
-                          {a.texto.replace(/\n/g, ' ')}
-                        </span>
-                      </button>
-                    ))}
+              {isConversationClosed(selected.atend) ? (
+                <div className="p-3 border-t border-[var(--line)] bg-[var(--surface-2)] flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+                  <div className="flex items-center gap-2 text-xs">
+                    <Lock className="h-4 w-4 text-[var(--accent)] shrink-0" />
+                    <span className="font-semibold text-[var(--ink)]">
+                      Conversa encerrada ({selected.atend})
+                    </span>
                   </div>
-                )}
+                  <div className="flex items-center gap-2">
+                    {aiConfigured && (
+                      <button
+                        type="button"
+                        onClick={handleEvaluateWithAi}
+                        disabled={evaluating}
+                        className="inline-flex items-center gap-1 rounded-lg bg-[var(--info-soft)] text-[var(--info)] px-3 py-1.5 text-xs font-semibold whitespace-nowrap"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        {evaluating ? 'Avaliando...' : 'Avaliar atendimento'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleReopenConversation}
+                      className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                    >
+                      Reabrir atendimento
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 border-t border-[var(--line)] flex items-end gap-2 relative bg-[var(--surface)] shrink-0">
+                  {showSuggestions && matchingShortcuts.length > 0 && (
+                    <div className="absolute left-2.5 right-2.5 bottom-full mb-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-xl max-h-60 overflow-y-auto z-20 divide-y divide-[var(--line)]">
+                      {matchingShortcuts.map((a, idx) => (
+                        <button
+                          key={a.cmd}
+                          type="button"
+                          onClick={() => setComposer(a.cmd)}
+                          className={`w-full text-left px-3 py-2 text-xs ${
+                            idx === suggIdx ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--surface-2)]'
+                          }`}
+                        >
+                          <span className="font-mono-num font-bold text-[var(--accent)]">
+                            {a.cmd}
+                          </span>
+                          <span className="block text-[var(--muted)] truncate mt-0.5">
+                            {a.texto.replace(/\n/g, ' ')}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
-                <textarea
-                  id="composer"
-                  rows={2}
-                  value={composer}
-                  onChange={(e) => {
-                    setComposer(e.target.value);
-                    setSuggIdx(0);
-                  }}
-                  onKeyDown={handleComposerKeyDown}
-                  placeholder="Digite uma mensagem ou / para atalhos"
-                  className="flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2 text-sm resize-none focus:outline-none focus:border-[var(--accent)]"
-                />
-                <button
-                  type="button"
-                  data-coach="sim-send"
-                  onClick={handleSendMessage}
-                  aria-label="Enviar mensagem"
-                  className="h-10 w-10 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] grid place-items-center shrink-0 hover:brightness-105"
-                >
-                  <Send className="h-4 w-4" />
-                </button>
-              </div>
+                  <textarea
+                    id="composer"
+                    rows={2}
+                    value={composer}
+                    onChange={(e) => {
+                      setComposer(e.target.value);
+                      setSuggIdx(0);
+                    }}
+                    onKeyDown={handleComposerKeyDown}
+                    placeholder="Digite uma mensagem ou / para atalhos"
+                    className="flex-1 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2 text-sm resize-none focus:outline-none focus:border-[var(--accent)]"
+                  />
+                  <button
+                    type="button"
+                    data-coach="sim-send"
+                    onClick={handleSendMessage}
+                    aria-label="Enviar mensagem"
+                    className="h-10 w-10 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] grid place-items-center shrink-0 hover:brightness-105"
+                  >
+                    <Send className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
             </>
           ) : (
             <div className="p-8 text-center text-sm text-[var(--muted)]">
@@ -973,6 +1313,68 @@ export function SimulatorView({
                     Negoc.
                   </button>
                 </div>
+
+                {!selected.isMed && (
+                  <div className="pt-1 space-y-1.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                      Ações e encaminhamentos rápidos
+                    </p>
+                    <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setNegOpen(true)}
+                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] py-1.5 px-2 font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                      >
+                        <Calendar className="h-3 w-3 text-[var(--accent)]" />
+                        Reagendar / Médico
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const l = buildConsultationLinks(selected.proc);
+                          handleForwardResource(
+                            `Olá, ${selected.first}! Segue o link da sua consulta com ${selected.medico} (${selected.data.replaceAll('-', '/')} às ${selected.hora}):\n${l.consulta}`,
+                            'Link de consulta'
+                          );
+                        }}
+                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] py-1.5 px-2 font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                      >
+                        <Link2 className="h-3 w-3 text-[var(--accent)]" />
+                        Link consulta
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const l = buildConsultationLinks(selected.proc);
+                          handleForwardResource(
+                            `Olá, ${selected.first}! Segue o link de convidado para a consulta de ${selected.data.replaceAll('-', '/')} às ${selected.hora}:\n${l.convidado}`,
+                            'Link de convidado'
+                          );
+                        }}
+                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] py-1.5 px-2 font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                      >
+                        <Users className="h-3 w-3 text-[var(--accent)]" />
+                        Link convidado
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const l = buildConsultationLinks(selected.proc);
+                          const valor =
+                            selected.tipo === 'Gratuita' ? 'R$ 0,00 (Gratuita)' : 'R$ 89,00';
+                          handleForwardResource(
+                            `Olá, ${selected.first}! Segue a Nota Fiscal (${l.nfNumero}) da sua consulta com ${selected.medico}:\n• Valor: ${valor}\n• PDF da NFS-e: ${l.nfLink}`,
+                            'Nota fiscal'
+                          );
+                        }}
+                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] py-1.5 px-2 font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                      >
+                        <Receipt className="h-3 w-3 text-[var(--accent)]" />
+                        Nota fiscal
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {selected.key === 'solicitacoes' && (
@@ -1197,6 +1599,14 @@ export function SimulatorView({
           patient={selected}
           onClose={() => setNegOpen(false)}
           onToast={onToast}
+          onReschedule={handleRescheduleSelected}
+          onChangeDoctor={handleChangeDoctorSelected}
+          onChangeStatus={handleChangeConsultationStatus}
+          onAddNote={handleAddNoteFromModal}
+          onForwardToChat={(text, label) => {
+            handleForwardResource(text, label);
+            setNegOpen(false);
+          }}
         />
       )}
     </div>

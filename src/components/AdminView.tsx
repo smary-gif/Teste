@@ -1,15 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import { DEFAULT_CONFIG } from '../data/defaults';
-import type { PortalConfig } from '../types';
+import { DEFAULT_CONFIG, DEFAULT_LEADERSHIP } from '../data/defaults';
+import type { AiVoiceProfile, PortalConfig } from '../types';
 import { cloneData } from '../utils/helpers';
+import { VoiceConfigPanel } from './VoiceConfigPanel';
 
 interface AdminViewProps {
   cfg: PortalConfig;
   onSaveConfig: (next: PortalConfig) => void;
   onToast: (msg: string) => void;
+  aiConfigured?: boolean;
+  speakerName?: string;
+  voiceProfile?: AiVoiceProfile | null;
+  onUpdateVoiceProfile?: (next: AiVoiceProfile | null) => void;
 }
 
-export function AdminView({ cfg, onSaveConfig, onToast }: AdminViewProps) {
+export function AdminView({
+  cfg,
+  onSaveConfig,
+  onToast,
+  aiConfigured = false,
+  speakerName = 'Colaboradora',
+  voiceProfile = null,
+  onUpdateVoiceProfile,
+}: AdminViewProps) {
   const [draft, setDraft] = useState<PortalConfig>(() => cloneData(cfg));
   const [dirty, setDirty] = useState(false);
 
@@ -52,12 +65,22 @@ export function AdminView({ cfg, onSaveConfig, onToast }: AdminViewProps) {
     <div className="max-w-[1400px] mx-auto space-y-5 pb-16">
       <div>
         <p className="text-xs text-[var(--muted)]">Somente coordenação / instrutora</p>
-        <h1 className="text-2xl font-bold mt-0.5">Administração</h1>
+        <h1 className="text-2xl font-bold mt-0.5">Administração e Configurações</h1>
         <p className="text-sm text-[var(--muted)] mt-1">
-          Personalize identidade, departamentos, passo a passo dos subsetores, atalhos de mensagem
-          e templates automáticos.
+          Configure a voz personalizada da IA, identidade do portal, departamentos, passo a passo
+          dos subsetores e atalhos de mensagem.
         </p>
       </div>
+
+      {onUpdateVoiceProfile && (
+        <VoiceConfigPanel
+          speakerName={speakerName}
+          aiConfigured={aiConfigured}
+          voiceProfile={voiceProfile}
+          onUpdateVoiceProfile={onUpdateVoiceProfile}
+          onToast={onToast}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 space-y-3">
@@ -103,9 +126,80 @@ export function AdminView({ cfg, onSaveConfig, onToast }: AdminViewProps) {
         </section>
 
         <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 space-y-3">
-          <h2 className="text-base font-bold">Instrutora / Madrinha</h2>
+          <h2 className="text-base font-bold">Estrutura de Liderança & Treinamento</h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+            <label className="block space-y-1 text-xs font-semibold text-[var(--muted)]">
+              <span>Treinadora</span>
+              <input
+                type="text"
+                value={(draft.lideranca || DEFAULT_LEADERSHIP).treinadora || draft.madrinha.nome}
+                onChange={(e) =>
+                  updateDraft((d) => ({
+                    ...d,
+                    lideranca: {
+                      ...(d.lideranca || DEFAULT_LEADERSHIP),
+                      treinadora: e.target.value,
+                    },
+                    madrinha: { ...d.madrinha, nome: e.target.value },
+                  }))
+                }
+                className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] font-normal"
+              />
+            </label>
+            <label className="block space-y-1 text-xs font-semibold text-[var(--muted)]">
+              <span>Coordenadora</span>
+              <input
+                type="text"
+                value={(draft.lideranca || DEFAULT_LEADERSHIP).coordenadora}
+                onChange={(e) =>
+                  updateDraft((d) => ({
+                    ...d,
+                    lideranca: {
+                      ...(d.lideranca || DEFAULT_LEADERSHIP),
+                      coordenadora: e.target.value,
+                    },
+                  }))
+                }
+                className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] font-normal"
+              />
+            </label>
+            <label className="block space-y-1 text-xs font-semibold text-[var(--muted)]">
+              <span>Liderança</span>
+              <input
+                type="text"
+                value={(draft.lideranca || DEFAULT_LEADERSHIP).lideranca}
+                onChange={(e) =>
+                  updateDraft((d) => ({
+                    ...d,
+                    lideranca: {
+                      ...(d.lideranca || DEFAULT_LEADERSHIP),
+                      lideranca: e.target.value,
+                    },
+                  }))
+                }
+                className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] font-normal"
+              />
+            </label>
+            <label className="block space-y-1 text-xs font-semibold text-[var(--muted)]">
+              <span>Liderança em treinamento</span>
+              <input
+                type="text"
+                value={(draft.lideranca || DEFAULT_LEADERSHIP).liderancaTreinamento}
+                onChange={(e) =>
+                  updateDraft((d) => ({
+                    ...d,
+                    lideranca: {
+                      ...(d.lideranca || DEFAULT_LEADERSHIP),
+                      liderancaTreinamento: e.target.value,
+                    },
+                  }))
+                }
+                className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] font-normal"
+              />
+            </label>
+          </div>
           <label className="block space-y-1 text-xs font-semibold text-[var(--muted)]">
-            <span>Nome</span>
+            <span>Responsável direta (Treinadora)</span>
             <input
               type="text"
               value={draft.madrinha.nome}

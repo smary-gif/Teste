@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { MessageCircle, Send, Trash2, X } from 'lucide-react';
-import { EQUIPE } from '../data/defaults';
+import { Bot, MessageCircle, Send, Trash2, X } from 'lucide-react';
+import { DEFAULT_LEADERSHIP, EQUIPE } from '../data/defaults';
 import type {
   MentorshipChatMsg,
   MentorshipComment,
@@ -18,6 +18,7 @@ interface MentorshipViewProps {
   onDeleteComment: (personKey: string, commentId: string) => void;
   chatsByPerson: Record<string, MentorshipChatMsg[]>;
   onSendChatMsg: (personKey: string, msg: MentorshipChatMsg) => void;
+  onOpenQuickSim?: (deptKey?: string) => void;
   onToast: (msg: string) => void;
 }
 
@@ -37,6 +38,7 @@ export function MentorshipView({
   onDeleteComment,
   chatsByPerson,
   onSendChatMsg,
+  onOpenQuickSim,
   onToast,
 }: MentorshipViewProps) {
   const [selectedName, setSelectedName] = useState<string>(EQUIPE[7].nome);
@@ -94,12 +96,18 @@ export function MentorshipView({
         <p className="text-sm text-[var(--muted)] mt-1">
           {isAdmin
             ? 'Cada colaboradora tem seu espaço individual de feedbacks e acompanhamento.'
-            : 'Este é o seu espaço individual com a madrinha de integração.'}
+            : 'Este é o seu espaço individual com a treinadora de integração.'}
         </p>
       </div>
 
-      <div className="rounded-xl bg-[var(--info-soft)] text-[var(--info)] px-4 py-3 text-xs">
-        {cfg.madrinha.aviso}
+      <div className="rounded-xl bg-[var(--info-soft)] text-[var(--info)] px-4 py-3 text-xs space-y-1">
+        <p>{cfg.madrinha.aviso}</p>
+        <p className="font-semibold">
+          Treinadora: {(cfg.lideranca || DEFAULT_LEADERSHIP).treinadora || cfg.madrinha.nome} ·
+          Coordenadora: {(cfg.lideranca || DEFAULT_LEADERSHIP).coordenadora} · Liderança:{' '}
+          {(cfg.lideranca || DEFAULT_LEADERSHIP).lideranca} · Liderança em treinamento:{' '}
+          {(cfg.lideranca || DEFAULT_LEADERSHIP).liderancaTreinamento}
+        </p>
       </div>
 
       <div
@@ -154,22 +162,37 @@ export function MentorshipView({
             <div className="min-w-0 flex-1">
               <h2 className="text-lg font-bold truncate">{displayName}</h2>
               <p className="text-xs text-[var(--muted)]">
-                {displaySub} · Madrinha: <strong className="text-[var(--ink)]">{cfg.madrinha.nome}</strong>
+                {displaySub} · Treinadora:{' '}
+                <strong className="text-[var(--ink)]">{cfg.madrinha.nome}</strong>
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setChatOpen(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-xs font-semibold whitespace-nowrap"
-            >
-              <MessageCircle className="h-4 w-4" />
-              {isAdmin ? `Conversar com ${activeMember?.apelido}` : 'Falar com a madrinha'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {onOpenQuickSim && (
+                <button
+                  type="button"
+                  onClick={() => onOpenQuickSim('geral')}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                >
+                  <Bot className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  Simular caso
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setChatOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-xs font-semibold whitespace-nowrap"
+              >
+                <MessageCircle className="h-4 w-4" />
+                {isAdmin
+                  ? `Conversar com ${activeMember?.apelido}`
+                  : `Falar com a treinadora (${cfg.madrinha.nome})`}
+              </button>
+            </div>
           </section>
 
           <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 space-y-4">
             <div>
-              <h2 className="text-base font-bold">Comentários da madrinha</h2>
+              <h2 className="text-base font-bold">Comentários da treinadora</h2>
               <p className="text-xs text-[var(--muted)]">
                 Pontos de melhoria, elogios e sugestões.
               </p>
@@ -234,7 +257,7 @@ export function MentorshipView({
                 ))
               ) : (
                 <div className="rounded-xl border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--muted)]">
-                  Nenhum comentário da madrinha ainda.
+                  Nenhum comentário da treinadora ainda.
                 </div>
               )}
             </div>

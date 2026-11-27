@@ -1,38 +1,57 @@
 import React, { useEffect, useState } from 'react';
 import {
   Award,
+  Bot,
   CheckCircle2,
   Clock,
   Lock,
   Play,
   Printer,
+  RefreshCw,
   RotateCcw,
   ShieldAlert,
   Unlock,
+  UserPlus,
+  Users,
 } from 'lucide-react';
 import {
+  computeTraineeSummary,
+  DEFAULT_LEADERSHIP,
+  EMPTY_TRAINEE_PROGRESS,
   TRAINEE_DAYS,
   TRAINEE_INTEGRATED_POOL,
+  TRN_DAY_TIME_SECONDS,
+  TRN_FINAL_TIME_SECONDS,
   TRN_MAXT,
   TRN_MIN,
-  TRN_TIME_SECONDS,
 } from '../data/defaults';
 import type {
   AppView,
+  PortalConfig,
   TraineeProgressStore,
   TraineeQuestionRaw,
   TraineeQuestionShuffled,
   TraineeStageKey,
 } from '../types';
 import { pad, shuffleArray } from '../utils/helpers';
+import { ClickCannabisLogo } from './ClickCannabisLogo';
+import type { TrilhaStore } from './IntegrationTrackView';
 import { StatusBadge } from './StatusBadge';
 
 interface TraineeViewProps {
+  cfg: PortalConfig;
   progress: TraineeProgressStore;
+  allProgressByPerson: Record<string, TraineeProgressStore>;
+  collaborators: string[];
+  trilhaData: Record<string, TrilhaStore>;
+  activeCollaborator: string;
+  googleLinked?: boolean;
+  onChangeCollaborator: (name: string) => void;
+  onAddCollaborator: (name: string) => void;
   onUpdateProgress: (next: TraineeProgressStore) => void;
   isAdmin: boolean;
-  traineeName: string;
   onLaunchPractice: (deptKey?: string) => void;
+  onOpenQuickSim: (deptKey?: string, patientId?: string) => void;
   onGoView: (view: AppView) => void;
   onToast: (msg: string) => void;
 }
@@ -44,7 +63,7 @@ interface QuizSession {
   startedAt: number | null;
 }
 
-type TraineeTab = 'visao' | TraineeStageKey;
+type TraineeTab = 'visao' | 'equipe' | TraineeStageKey;
 
 function shuffleQuestion(raw: TraineeQuestionRaw): TraineeQuestionShuffled {
   const indices = shuffleArray(raw.o.map((_, idx) => idx));
@@ -74,7 +93,7 @@ function buildQuizSet(stage: TraineeStageKey): TraineeQuestionShuffled[] {
   }
   const dayIndex = Number(stage[1]) - 1;
   return shuffleArray(TRAINEE_DAYS[dayIndex].pool)
-    .slice(0, 8)
+    .slice(0, 10)
     .map(shuffleQuestion);
 }
 
@@ -85,18 +104,43 @@ const STAGE_NAMES: Record<TraineeStageKey, string> = {
   final: 'Prova Final Hard',
 };
 
+const SUB_TO_DEPT: Record<string, string> = {
+  'Chat geral': 'geral',
+  Agendamento: 'agendamento',
+  Reagendamento: 'reagendamento',
+  'Confirmação (4.1 a 4.4)': 'confirmacao',
+  'Suporte aos pacientes (em andamento, aguardando, faltou)': 'andamento',
+  'Suporte aos médicos': 'medicos',
+  'Solicitações (5 colunas)': 'solicitacoes',
+  'Rotina de turno e auditoria de qualidade': 'solicitacoes',
+};
+
 export function TraineeView({
+  cfg,
   progress,
+  allProgressByPerson,
+  collaborators,
+  trilhaData,
+  activeCollaborator,
+  googleLinked = false,
+  onChangeCollaborator,
+  onAddCollaborator,
   onUpdateProgress,
   isAdmin,
-  traineeName,
   onLaunchPractice,
+  onOpenQuickSim,
   onGoView,
   onToast,
 }: TraineeViewProps) {
+  const leadership = cfg.lideranca || DEFAULT_LEADERSHIP;
   const [tab, setTab] = useState<TraineeTab>('visao');
+  const [newCollabName, setNewCollabName] = useState('');
   const [sessions, setSessions] = useState<Partial<Record<TraineeStageKey, QuizSession>>>({});
-  const [finalRemaining, setFinalRemaining] = useState<number>(TRN_TIME_SECONDS);
+  const [remainingSecs, setRemainingSecs] = useState<number>(TRN_DAY_TIME_SECONDS);
+
+  useEffect(() => {
+    setSessions({});
+  }, [activeCollaborator]);
 
   const isPassed = (k: TraineeStageKey) => {
     const best = progress.best[k];
@@ -111,22 +155,11 @@ export function TraineeView({
   };
 
   const triesOf = (k: TraineeStageKey) => progress.tries[k] || 0;
-
-  const ensureSession = (k: TraineeStageKey): QuizSession => {
-    const existing = sessions[k];
-    if (existing) return existing;
-    const created: QuizSession = {
-      questions: buildQuizSet(k),
-      answers: {},
-      result: null,
-      startedAt: k === 'final' ? Date.now() : null,
-    };
-    setSessions((prev) => ({ ...prev, [k]: created }));
-    return created;
-  };
+  const maxTimeFor = (k: TraineeStageKey) =>
+    k === 'final' ? TRN_FINAL_TIME_SECONDS : TRN_DAY_TIME_SECONDS;
 
   useEffect(() => {
-    if (tab !== 'visao' && isUnlocked(tab)) {
+    if (tab !== 'visao' && tab !== 'equipe' && isUnlocked(tab)) {
       const dayDef = TRAINEE_DAYS.find((d) => d.k === tab);
       const pracReady = dayDef
         ? dayDef.prat.every((task) => progress.prac[task.id])
@@ -136,13 +169,13 @@ export function TraineeView({
           questions: buildQuizSet(tab),
           answers: {},
           result: null,
-          startedAt: tab === 'final' ? Date.now() : null,
+          startedAt: Date.now(),
         };
         setSessions((prev) => ({ ...prev, [tab]: created }));
-        if (tab === 'final') setFinalRemaining(TRN_TIME_SECONDS);
+        setRemainingSecs(maxTimeFor(tab));
       }
     }
-  }, [tab, progress.prac]);
+  }, [tab, progress.prac, activeCollaborator]);
 
   const gradeQuiz = (k: TraineeStageKey, forcedTimeout = false) => {
     const session = sessions[k];
@@ -181,33 +214,35 @@ export function TraineeView({
     onUpdateProgress(nextProgress);
 
     if (forcedTimeout) {
-      onToast(`Tempo esgotado! Prova corrigida automaticamente: ${pct}%.`);
+      onToast(`Tempo esgotado! Prova de ${activeCollaborator} corrigida: ${pct}%.`);
     } else if (pct >= TRN_MIN[k]) {
-      onToast(`Aprovado(a) com ${pct}%! Próxima etapa liberada.`);
+      onToast(`${activeCollaborator} aprovada com ${pct}%! Próxima etapa liberada.`);
     } else {
-      onToast(`Nota ${pct}%. Abaixo do mínimo exigido de ${TRN_MIN[k]}%.`);
+      onToast(`Nota ${pct}%. Mínimo exigido para esta prova difícil: ${TRN_MIN[k]}%.`);
     }
   };
 
   useEffect(() => {
-    const finalSession = sessions.final;
-    if (tab !== 'final' || !finalSession || finalSession.result || !finalSession.startedAt) {
+    if (tab === 'visao' || tab === 'equipe') return;
+    const activeSession = sessions[tab];
+    if (!activeSession || activeSession.result || !activeSession.startedAt) {
       return;
     }
 
+    const limit = maxTimeFor(tab);
     const tick = () => {
-      const elapsed = Math.floor((Date.now() - (finalSession.startedAt || Date.now())) / 1000);
-      const rem = Math.max(0, TRN_TIME_SECONDS - elapsed);
-      setFinalRemaining(rem);
+      const elapsed = Math.floor((Date.now() - (activeSession.startedAt || Date.now())) / 1000);
+      const rem = Math.max(0, limit - elapsed);
+      setRemainingSecs(rem);
       if (rem <= 0) {
-        gradeQuiz('final', true);
+        gradeQuiz(tab, true);
       }
     };
 
     tick();
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, [tab, sessions.final]);
+  }, [tab, sessions]);
 
   const togglePractice = (taskId: string) => {
     onUpdateProgress({
@@ -243,9 +278,9 @@ export function TraineeView({
       questions: buildQuizSet(k),
       answers: {},
       result: null,
-      startedAt: k === 'final' ? Date.now() : null,
+      startedAt: Date.now(),
     };
-    if (k === 'final') setFinalRemaining(TRN_TIME_SECONDS);
+    setRemainingSecs(maxTimeFor(k));
     setSessions((prev) => ({ ...prev, [k]: fresh }));
   };
 
@@ -255,20 +290,14 @@ export function TraineeView({
       tries: { ...progress.tries, [k]: 0 },
     });
     handleRetry(k);
-    onToast(`Novas tentativas liberadas para ${STAGE_NAMES[k]}.`);
+    onToast(`Novas tentativas liberadas para ${activeCollaborator} em ${STAGE_NAMES[k]}.`);
   };
 
-  const handleResetAll = () => {
-    onUpdateProgress({
-      prac: {},
-      best: {},
-      tries: {},
-      date: {},
-      simSignals: {},
-    });
+  const handleResetPerson = () => {
+    onUpdateProgress(EMPTY_TRAINEE_PROGRESS());
     setSessions({});
     setTab('visao');
-    onToast('Progresso do programa Trainee reiniciado.');
+    onToast(`Processo individual de ${activeCollaborator} reiniciado.`);
   };
 
   const stageKeys: TraineeStageKey[] = ['d1', 'd2', 'd3', 'final'];
@@ -276,10 +305,10 @@ export function TraineeView({
   const completedCount = stageKeys.filter(isPassed).length;
 
   const renderQuizBlock = (k: TraineeStageKey) => {
-    const session = sessions[k] || ensureSession(k);
+    const session = sessions[k];
     const tries = triesOf(k);
     const remainingTries = TRN_MAXT[k] - tries;
-    const exhaustedWithoutPass = !isPassed(k) && remainingTries <= 0 && !session.result;
+    const exhaustedWithoutPass = !isPassed(k) && remainingTries <= 0 && !session?.result;
 
     if (exhaustedWithoutPass) {
       return (
@@ -287,23 +316,41 @@ export function TraineeView({
           <div className="flex items-start gap-3">
             <ShieldAlert className="h-5 w-5 text-[var(--danger)] shrink-0 mt-0.5" />
             <div className="space-y-3">
-              <h2 className="text-lg font-bold">Tentativas esgotadas</h2>
+              <h2 className="text-lg font-bold">Tentativas esgotadas — {activeCollaborator}</h2>
               <p className="text-sm text-[var(--muted)]">
-                Você utilizou todas as {TRN_MAXT[k]} tentativas disponíveis para esta etapa. Procure a
-                instrutora ou coordenação para revisar os erros e liberar uma nova tentativa.
+                Foram utilizadas todas as {TRN_MAXT[k]} tentativas desta prova difícil. Revise os
+                casos no Simulador Rápido ou solicite liberação da instrutora.
               </p>
-              {isAdmin && (
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => handleUnlockTries(k)}
-                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-sm font-semibold whitespace-nowrap"
+                  onClick={() => onOpenQuickSim(k === 'd2' ? 'confirmacao' : k === 'd3' ? 'solicitacoes' : 'geral')}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
                 >
-                  <Unlock className="h-4 w-4" />
-                  Liberar nova tentativa (Instrutora)
+                  <Bot className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  Treinar no Simulador antes
                 </button>
-              )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleUnlockTries(k)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-xs font-semibold whitespace-nowrap"
+                  >
+                    <Unlock className="h-4 w-4" />
+                    Liberar nova tentativa (Instrutora)
+                  </button>
+                )}
+              </div>
             </div>
           </div>
+        </section>
+      );
+    }
+
+    if (!session) {
+      return (
+        <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-sm text-[var(--muted)]">
+          Preparando caderno cronometrado...
         </section>
       );
     }
@@ -313,6 +360,7 @@ export function TraineeView({
       return Array.isArray(a) ? a.length > 0 : a !== undefined;
     }).length;
     const allAnswered = answeredCount === session.questions.length;
+    const isUrgentTime = remainingSecs < 120;
 
     return (
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 md:p-6 space-y-5">
@@ -320,26 +368,27 @@ export function TraineeView({
           <div>
             <h2 className="text-lg font-bold">
               {k === 'final'
-                ? 'Prova Final Hard · 30 questões'
-                : `Prova do Dia · 8 questões`}
+                ? 'Prova Final Hard · 30 questões cronometradas'
+                : `Prova Hard do Dia · 10 questões cronometradas`}
             </h2>
             <p className="text-xs text-[var(--muted)] mt-0.5">
-              Nota mínima: <span className="font-semibold text-[var(--ink)]">{TRN_MIN[k]}%</span> ·
-              Questões embaralhadas e sem consulta · Múltipla escolha vale tudo ou nada
+              Candidata: <strong className="text-[var(--ink)]">{activeCollaborator}</strong> · Nota
+              mínima: <strong className="text-[var(--ink)]">{TRN_MIN[k]}%</strong> · Múltipla
+              escolha vale tudo ou nada · Sem consulta
             </p>
           </div>
 
-          {k === 'final' && !session.result && (
+          {!session.result && (
             <div
               className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold font-mono-num ${
-                finalRemaining < 300
+                isUrgentTime
                   ? 'border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]'
                   : 'border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)]'
               }`}
             >
               <Clock className="h-4 w-4" />
               <span>
-                {pad(Math.floor(finalRemaining / 60))}:{pad(finalRemaining % 60)}
+                {pad(Math.floor(remainingSecs / 60))}:{pad(remainingSecs % 60)}
               </span>
             </div>
           )}
@@ -361,7 +410,7 @@ export function TraineeView({
                   {q.q}
                   {q.m && (
                     <span className="ml-2 inline-block rounded-md bg-[var(--info-soft)] text-[var(--info)] px-2 py-0.5 text-[11px] font-bold">
-                      marque todas as corretas
+                      múltipla escolha — marque todas as corretas
                     </span>
                   )}
                 </p>
@@ -404,7 +453,7 @@ export function TraineeView({
 
                 {session.result && (
                   <p className="text-xs text-[var(--muted)] bg-[var(--surface-2)] rounded-lg px-3 py-2">
-                    <strong className="text-[var(--ink)]">Critério:</strong> {q.w}
+                    <strong className="text-[var(--ink)]">Critério ClickCannabis:</strong> {q.w}
                   </p>
                 )}
               </div>
@@ -433,8 +482,8 @@ export function TraineeView({
               >
                 {session.result.pct}% ({session.result.ok} de {session.result.total}) ·{' '}
                 {session.result.pct >= TRN_MIN[k]
-                  ? 'Aprovado(a)'
-                  : `Abaixo da nota mínima de ${TRN_MIN[k]}%`}
+                  ? 'Aprovada'
+                  : `Reprovada (mín. ${TRN_MIN[k]}%)`}
               </div>
 
               {session.result.pct < TRN_MIN[k] &&
@@ -445,13 +494,13 @@ export function TraineeView({
                     className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2.5 text-sm font-semibold whitespace-nowrap"
                   >
                     <RotateCcw className="h-4 w-4" />
-                    Tentar de novo ({TRN_MAXT[k] - triesOf(k)} restante
+                    Tentar novamente ({TRN_MAXT[k] - triesOf(k)} restante
                     {TRN_MAXT[k] - triesOf(k) > 1 ? 's' : ''})
                   </button>
                 ) : (
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="text-xs text-[var(--muted)]">
-                      Tentativas esgotadas. Procure a treinadora para liberar nova tentativa.
+                      Tentativas esgotadas para {activeCollaborator}.
                     </span>
                     {isAdmin && (
                       <button
@@ -469,9 +518,7 @@ export function TraineeView({
               {session.result.pct >= TRN_MIN[k] && k !== 'final' && (
                 <button
                   type="button"
-                  onClick={() =>
-                    setTab(k === 'd1' ? 'd2' : k === 'd2' ? 'd3' : 'final')
-                  }
+                  onClick={() => setTab(k === 'd1' ? 'd2' : k === 'd2' ? 'd3' : 'final')}
                   className="rounded-xl border border-[var(--accent)] text-[var(--accent)] px-4 py-2 text-sm font-semibold hover:bg-[var(--accent-soft)] whitespace-nowrap"
                 >
                   Avançar para a próxima etapa →
@@ -487,15 +534,25 @@ export function TraineeView({
   const renderDayTab = (dayKey: 'd1' | 'd2' | 'd3') => {
     if (!isUnlocked(dayKey)) {
       return (
-        <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 flex items-center gap-3">
-          <Lock className="h-5 w-5 text-[var(--muted)] shrink-0" />
-          <div>
-            <h2 className="text-base font-bold">Módulo bloqueado</h2>
-            <p className="text-sm text-[var(--muted)]">
-              Conclua as práticas e seja aprovado(a) na prova do dia anterior (mínimo 80%) para
-              desbloquear esta etapa.
-            </p>
+        <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Lock className="h-5 w-5 text-[var(--muted)] shrink-0" />
+            <div>
+              <h2 className="text-base font-bold">Módulo bloqueado para {activeCollaborator}</h2>
+              <p className="text-sm text-[var(--muted)]">
+                Conclua as práticas e atinja pelo menos {TRN_MIN[dayKey === 'd2' ? 'd1' : 'd2']}% na
+                prova do dia anterior para liberar esta etapa.
+              </p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={() => onOpenQuickSim(dayKey === 'd2' ? 'geral' : 'confirmacao')}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-3.5 py-2 text-xs font-semibold whitespace-nowrap"
+          >
+            <Bot className="h-3.5 w-3.5" />
+            Praticar no Simulador
+          </button>
         </section>
       );
     }
@@ -509,12 +566,12 @@ export function TraineeView({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <span className="text-xs font-bold uppercase tracking-wider text-[var(--accent)]">
-                Nível {day.nivel}
+                Nível {day.nivel} · Processo de {activeCollaborator}
               </span>
               <h2 className="text-xl font-bold mt-0.5">{day.titulo}</h2>
             </div>
             <StatusBadge tone={isPassed(dayKey) ? 'ok' : 'info'}>
-              {isPassed(dayKey) ? `Aprovado · ${progress.best[dayKey]}%` : 'Em treinamento'}
+              {isPassed(dayKey) ? `Aprovada · ${progress.best[dayKey]}%` : 'Em treinamento'}
             </StatusBadge>
           </div>
 
@@ -523,21 +580,35 @@ export function TraineeView({
           </p>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-            {day.subs.map(([subName, bullets]) => (
-              <div
-                key={subName}
-                className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-4 space-y-2"
-              >
-                <h3 className="text-sm font-bold text-[var(--ink)]">{subName}</h3>
-                <ul className="space-y-1.5 text-xs text-[var(--muted)] list-disc pl-4">
-                  {bullets.map((b, idx) => (
-                    <li key={idx} className="leading-relaxed">
-                      {b}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+            {day.subs.map(([subName, bullets]) => {
+              const mappedDept = SUB_TO_DEPT[subName] || day.prat[0]?.deptKey || 'geral';
+              return (
+                <div
+                  key={subName}
+                  className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-4 flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-bold text-[var(--ink)]">{subName}</h3>
+                    <ul className="space-y-1.5 text-xs text-[var(--muted)] list-disc pl-4">
+                      {bullets.map((b, idx) => (
+                        <li key={idx} className="leading-relaxed">
+                          {b}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => onOpenQuickSim(mappedDept)}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                  >
+                    <Bot className="h-3.5 w-3.5 text-[var(--accent)]" />
+                    Simular este tema
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -546,18 +617,28 @@ export function TraineeView({
             <div>
               <h2 className="text-lg font-bold">Prática obrigatória no Simulador</h2>
               <p className="text-xs text-[var(--muted)]">
-                Execute cada tarefa no Simulador de IA (ou CRM/Solicitações) e marque abaixo. A
-                prova do dia libera após concluir todas.
+                Execute cada tarefa no Simulador (rápido ou tela cheia). A prova cronometrada de{' '}
+                {activeCollaborator} libera após concluir todas.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => onLaunchPractice(day.prat[0]?.deptKey)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
-            >
-              <Play className="h-3.5 w-3.5 text-[var(--accent)]" />
-              Abrir Simulador
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onOpenQuickSim(day.prat[0]?.deptKey)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] px-3 py-1.5 text-xs font-semibold whitespace-nowrap"
+              >
+                <Bot className="h-3.5 w-3.5" />
+                Simulador Rápido
+              </button>
+              <button
+                type="button"
+                onClick={() => onLaunchPractice(day.prat[0]?.deptKey)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+              >
+                <Play className="h-3.5 w-3.5 text-[var(--accent)]" />
+                Tela cheia
+              </button>
+            </div>
           </div>
 
           <div className="divide-y divide-[var(--line)]">
@@ -587,13 +668,23 @@ export function TraineeView({
                       <StatusBadge tone="ok">Praticado no Simulador</StatusBadge>
                     )}
                     {task.deptKey && (
-                      <button
-                        type="button"
-                        onClick={() => onLaunchPractice(task.deptKey)}
-                        className="rounded-lg border border-[var(--line)] px-2.5 py-1 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
-                      >
-                        Ir praticar →
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onOpenQuickSim(task.deptKey)}
+                          className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent-soft)] text-[var(--accent)] px-2.5 py-1 text-xs font-semibold hover:brightness-95 whitespace-nowrap"
+                        >
+                          <Bot className="h-3 w-3" />
+                          Simular rápido
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onLaunchPractice(task.deptKey)}
+                          className="rounded-lg border border-[var(--line)] px-2.5 py-1 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                        >
+                          Tela cheia →
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -605,51 +696,268 @@ export function TraineeView({
         {allPracDone ? (
           renderQuizBlock(dayKey)
         ) : (
-          <section className="rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-5 text-sm text-[var(--muted)]">
-            A prova do {dayKey === 'd1' ? 'Dia 1' : dayKey === 'd2' ? 'Dia 2' : 'Dia 3'} será
-            liberada assim que todas as práticas acima forem concluídas e marcadas.
+          <section className="rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-5 text-sm text-[var(--muted)] flex flex-wrap items-center justify-between gap-3">
+            <span>
+              A prova difícil do {dayKey === 'd1' ? 'Dia 1' : dayKey === 'd2' ? 'Dia 2' : 'Dia 3'}{' '}
+              será liberada assim que todas as 3 práticas acima forem concluídas.
+            </span>
+            <button
+              type="button"
+              onClick={() => onOpenQuickSim(day.prat.find((t) => !progress.prac[t.id])?.deptKey)}
+              className="rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1.5 text-xs font-semibold text-[var(--ink)] hover:border-[var(--accent)] whitespace-nowrap"
+            >
+              Concluir no Simulador →
+            </button>
           </section>
         )}
       </div>
     );
   };
 
-  return (
-    <div className="max-w-[1380px] mx-auto space-y-5">
-      <div className="no-print flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-xs text-[var(--muted)]">
-            Home · Programa Corporativo · Básico ao Avançado
-          </p>
-          <h1 className="text-2xl md:text-3xl font-bold mt-0.5">
-            Treinamento Trainee · 3 Dias Intensivos
-          </h1>
-          <p className="text-sm text-[var(--muted)] mt-1">
-            Formação progressiva do nível básico ao avançado em todos os 7 subsetores, com prática
-            no Simulador de IA e provas eliminatórias.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => onGoView('subsetores')}
-            className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
-          >
-            Guia dos Subsetores
-          </button>
-          {isAdmin && (
+  const renderTeamMatrix = () => {
+    return (
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 md:p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold">Processo Individual da Equipe · ClickCannabis</h2>
+            <p className="text-xs text-[var(--muted)]">
+              Cada colaboradora possui notas, práticas no simulador e trilha de integração
+              totalmente independentes.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {!googleLinked && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const clean = newCollabName.trim();
+                  if (!clean) return;
+                  onAddCollaborator(clean);
+                  setNewCollabName('');
+                }}
+                className="inline-flex items-center gap-1.5"
+              >
+                <input
+                  type="text"
+                  value={newCollabName}
+                  onChange={(e) => setNewCollabName(e.target.value)}
+                  placeholder="Colocar meu nome..."
+                  aria-label="Adicionar nome ao processo individual"
+                  className="w-40 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1.5 text-xs text-[var(--ink)] focus:outline-none focus:border-[var(--accent)]"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1.5 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                >
+                  <UserPlus className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  Adicionar
+                </button>
+              </form>
+            )}
             <button
               type="button"
-              onClick={handleResetAll}
-              className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3.5 py-2 text-xs font-semibold text-[var(--danger)] hover:border-[var(--danger)] whitespace-nowrap"
+              onClick={() => onOpenQuickSim('geral')}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-3.5 py-2 text-xs font-semibold whitespace-nowrap"
             >
-              Resetar progresso
+              <Bot className="h-3.5 w-3.5" />
+              Abrir Simulador
             </button>
-          )}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-[var(--line)]">
+          <table className="w-full min-w-[820px] text-xs border-collapse">
+            <thead>
+              <tr className="bg-[var(--surface-2)] text-[var(--muted)] uppercase tracking-wider text-[10px] border-b border-[var(--line)]">
+                <th className="text-left px-3 py-2.5">Colaboradora</th>
+                <th className="text-left px-3 py-2.5">Etapa atual</th>
+                <th className="text-center px-2.5 py-2.5">Dia 1</th>
+                <th className="text-center px-2.5 py-2.5">Dia 2</th>
+                <th className="text-center px-2.5 py-2.5">Dia 3</th>
+                <th className="text-center px-2.5 py-2.5">Final Hard</th>
+                <th className="text-center px-2.5 py-2.5">Práticas</th>
+                <th className="text-center px-2.5 py-2.5">Progresso</th>
+                <th className="text-right px-3 py-2.5">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--line)]">
+              {collaborators.map((name) => {
+                const p = allProgressByPerson[name] || EMPTY_TRAINEE_PROGRESS();
+                const s = computeTraineeSummary(p, trilhaData[name]);
+                const pracCount = TRAINEE_DAYS.flatMap((d) => d.prat).filter(
+                  (t) => p.prac[t.id]
+                ).length;
+                const isActive = name === activeCollaborator;
+
+                return (
+                  <tr
+                    key={name}
+                    className={isActive ? 'bg-[var(--accent-soft)]/50' : 'hover:bg-[var(--surface-2)]'}
+                  >
+                    <td className="px-3 py-2.5 font-bold text-[var(--ink)]">
+                      {name}
+                      {isActive && (
+                        <span className="ml-2 text-[10px] font-bold uppercase text-[var(--accent)]">
+                          (Ativa)
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <StatusBadge tone={s.completedStages === 4 ? 'ok' : 'info'}>
+                        {s.currentStageLabel}
+                      </StatusBadge>
+                    </td>
+                    {(['d1', 'd2', 'd3', 'final'] as TraineeStageKey[]).map((sk) => {
+                      const val = p.best[sk];
+                      const ok = val !== undefined && val >= TRN_MIN[sk];
+                      return (
+                        <td key={sk} className="px-2.5 py-2.5 text-center font-mono-num">
+                          {val !== undefined ? (
+                            <span
+                              className={
+                                ok
+                                  ? 'font-bold text-[var(--accent)]'
+                                  : 'font-semibold text-[var(--danger)]'
+                              }
+                            >
+                              {val}%
+                            </span>
+                          ) : (
+                            <span className="text-[var(--muted)]">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-2.5 py-2.5 text-center font-mono-num">{pracCount}/9</td>
+                    <td className="px-2.5 py-2.5 text-center font-mono-num">
+                      <strong className="text-[var(--accent)]">{s.completedStages}/4 provas</strong>
+                      <span className="block text-[10px] text-[var(--muted)]">
+                        Trilha {s.trilhaPct}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      <div className="inline-flex items-center gap-1.5">
+                        {(!googleLinked || isActive) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onChangeCollaborator(name);
+                              setTab('visao');
+                            }}
+                            className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                          >
+                            Abrir processo
+                          </button>
+                        )}
+                        {(!googleLinked || isActive) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onChangeCollaborator(name);
+                              onOpenQuickSim('geral');
+                            }}
+                            className="rounded-lg bg-[var(--accent-soft)] text-[var(--accent)] px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap"
+                          >
+                            Simular
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
+  };
+
+  return (
+    <div className="max-w-[1380px] mx-auto space-y-5">
+      {/* Header corporativo com logo e estrutura de liderança */}
+      <div className="no-print rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="space-y-2">
+            <ClickCannabisLogo subtitle="Programa Corporativo de Formação Trainee" />
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold">
+                Treinamento Trainee · {activeCollaborator}
+              </h1>
+              <p className="text-sm text-[var(--muted)] mt-0.5">
+                Formação intensiva de 3 dias (Básico ao Avançado), prática nos 7 subsetores e
+                provas difíceis cronometradas.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => onOpenQuickSim('geral')}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-3.5 py-2 text-xs font-semibold hover:brightness-105 whitespace-nowrap"
+            >
+              <Bot className="h-3.5 w-3.5" />
+              Simulador Rápido
+            </button>
+            <button
+              type="button"
+              onClick={() => onGoView('reciclagem')}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+            >
+              <RefreshCw className="h-3.5 w-3.5 text-[var(--accent)]" />
+              Reciclagem (Veteranas)
+            </button>
+            <button
+              type="button"
+              onClick={() => onGoView('subsetores')}
+              className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+            >
+              Guia dos Subsetores
+            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={handleResetPerson}
+                className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3.5 py-2 text-xs font-semibold text-[var(--danger)] hover:border-[var(--danger)] whitespace-nowrap"
+              >
+                Resetar {activeCollaborator}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-3 border-t border-[var(--line)]">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--accent)] block">
+              Treinadora
+            </span>
+            <strong className="text-sm text-[var(--ink)]">
+              {leadership.treinadora || cfg.madrinha.nome || 'Andréia'}
+            </strong>
+          </div>
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)] block">
+              Coordenadora
+            </span>
+            <strong className="text-sm text-[var(--ink)]">{leadership.coordenadora}</strong>
+          </div>
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)] block">
+              Liderança
+            </span>
+            <strong className="text-sm text-[var(--ink)]">{leadership.lideranca}</strong>
+          </div>
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)] block">
+              Liderança em Treinamento
+            </span>
+            <strong className="text-sm text-[var(--ink)]">{leadership.liderancaTreinamento}</strong>
+          </div>
         </div>
       </div>
 
+      {/* Tabs */}
       <div
         className="no-print flex flex-wrap gap-2"
         role="tablist"
@@ -658,13 +966,14 @@ export function TraineeView({
         {(
           [
             ['visao', 'Visão Geral'],
+            ['equipe', `Equipe (${collaborators.length})`],
             ['d1', 'Dia 1 · Básico'],
             ['d2', 'Dia 2 · Intermediário'],
             ['d3', 'Dia 3 · Avançado'],
             ['final', 'Prova Final Hard'],
           ] as Array<[TraineeTab, string]>
         ).map(([k, label]) => {
-          const locked = k !== 'visao' && !isUnlocked(k);
+          const locked = k !== 'visao' && k !== 'equipe' && !isUnlocked(k);
           const active = tab === k;
           return (
             <button
@@ -679,6 +988,7 @@ export function TraineeView({
                   : 'bg-[var(--surface)] border-[var(--line)] text-[var(--muted)] hover:text-[var(--ink)] hover:border-[var(--accent)]'
               }`}
             >
+              {k === 'equipe' && <Users className="h-3.5 w-3.5" />}
               {locked && <Lock className="h-3.5 w-3.5" />}
               <span>{label}</span>
             </button>
@@ -688,17 +998,18 @@ export function TraineeView({
 
       {tab === 'visao' && (
         <div className="space-y-4">
+          {/* Mapa de progressão 4 etapas */}
           <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 md:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <div>
                 <h2 className="text-lg font-bold">Mapa de Progressão (Básico → Avançado)</h2>
                 <p className="text-xs text-[var(--muted)]">
-                  Conclua {completedCount} de 4 etapas obrigatórias para conquistar a certificação
-                  Trainee.
+                  {completedCount} de 4 provas eliminatórias concluídas por{' '}
+                  <strong className="text-[var(--ink)]">{activeCollaborator}</strong>.
                 </p>
               </div>
               <div className="text-right font-mono-num">
-                <span className="text-xs text-[var(--muted)] block">Conclusão Geral</span>
+                <span className="text-xs text-[var(--muted)] block">Provas Concluídas</span>
                 <strong className="text-xl text-[var(--accent)]">
                   {Math.round((completedCount / 4) * 100)}%
                 </strong>
@@ -711,6 +1022,8 @@ export function TraineeView({
                 const unlocked = isUnlocked(k);
                 const passed = isPassed(k);
                 const tries = triesOf(k);
+                const quickDept =
+                  k === 'd1' ? 'geral' : k === 'd2' ? 'confirmacao' : k === 'd3' ? 'solicitacoes' : 'andamento';
                 return (
                   <div
                     key={k}
@@ -728,33 +1041,42 @@ export function TraineeView({
                         {!unlocked ? (
                           <StatusBadge tone="neutral">Bloqueado</StatusBadge>
                         ) : passed ? (
-                          <StatusBadge tone="ok">Aprovado · {best}%</StatusBadge>
+                          <StatusBadge tone="ok">Aprovada · {best}%</StatusBadge>
                         ) : (
                           <StatusBadge tone={best !== undefined ? 'warn' : 'info'}>
-                            {best !== undefined ? `Reprovado · ${best}%` : 'Liberado'}
+                            {best !== undefined ? `Reprovada · ${best}%` : 'Liberada'}
                           </StatusBadge>
                         )}
                       </div>
                       <h3 className="text-base font-bold">{STAGE_NAMES[k]}</h3>
                       <p className="text-xs text-[var(--muted)]">
-                        {k === 'd1' && 'Chat geral, Agendamento e Reagendamento (mín. 80%).'}
-                        {k === 'd2' && 'Confirmação, Suporte aos pacientes e Médicos (mín. 80%).'}
-                        {k === 'd3' && 'Solicitações, turno e qualidade operacional (mín. 80%).'}
-                        {k === 'final' && '30 questões integradas · 45 min · mín. 90%.'}
+                        {k === 'd1' && '10 questões · 12 min · mín. 85% (Chat, Agendamento, Reagendamento).'}
+                        {k === 'd2' && '10 questões · 12 min · mín. 85% (Confirmação, CRM, Médicos).'}
+                        {k === 'd3' && '10 questões · 12 min · mín. 85% (Solicitações, Turno, Auditoria).'}
+                        {k === 'final' && '30 questões integradas · 35 min · mín. 90%.'}
                       </p>
                     </div>
 
-                    <div className="flex items-center justify-between pt-2 border-t border-[var(--line)] text-xs">
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--line)] text-xs">
                       <span className="text-[var(--muted)] tabular-nums">
-                        Tentativas: {tries}/{TRN_MAXT[k]}
+                        Tent.: {tries}/{TRN_MAXT[k]}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => setTab(k)}
-                        className="font-semibold text-[var(--accent)] hover:underline whitespace-nowrap"
-                      >
-                        {unlocked ? (passed ? 'Revisar' : 'Acessar →') : 'Ver requisito'}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onOpenQuickSim(quickDept)}
+                          className="font-semibold text-[var(--muted)] hover:text-[var(--accent)] whitespace-nowrap"
+                        >
+                          Simular
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTab(k)}
+                          className="font-semibold text-[var(--accent)] hover:underline whitespace-nowrap"
+                        >
+                          {unlocked ? (passed ? 'Revisar' : 'Acessar →') : 'Ver requisito'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -763,49 +1085,45 @@ export function TraineeView({
           </section>
 
           <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 md:p-6 space-y-3">
-            <h2 className="text-lg font-bold">Regras do Treinamento Hard (3 Dias)</h2>
+            <h2 className="text-lg font-bold">Regras do Treinamento Hard ClickCannabis (3 Dias)</h2>
             <ul className="space-y-2 text-sm text-[var(--muted)] list-disc pl-5">
               <li>
-                <strong className="text-[var(--ink)]">Cobertura total dos 7 subsetores:</strong>{' '}
-                Dia 1 (Nível Básico) foca entrada, agendamento e regra das 2 horas; Dia 2 (Nível
-                Intermediário) foca confirmação ativa, CRM ao vivo e suporte médico; Dia 3 (Nível
-                Avançado) foca Solicitações, levantamento e passagem de turno.
-              </li>
-              <li>
-                <strong className="text-[var(--ink)]">Critério rigoroso de aprovação:</strong> cada
-                dia exige práticas concluídas no Simulador e prova de 8 questões com mínimo de{' '}
-                <strong className="text-[var(--ink)]">80%</strong> (máximo 1 erro). A etapa
-                seguinte só abre após aprovação.
+                <strong className="text-[var(--ink)]">Provas diárias cronometradas e difíceis:</strong>{' '}
+                cada dia libera apenas após concluir as 3 práticas no Simulador e exige prova de{' '}
+                <strong className="text-[var(--ink)]">10 questões em 12 minutos</strong> com mínimo de{' '}
+                <strong className="text-[var(--ink)]">85%</strong> (máximo 1 erro).
               </li>
               <li>
                 <strong className="text-[var(--ink)]">Prova Final Hard:</strong> 30 questões (8 de
-                cada dia + 6 casos integrados), cronômetro de{' '}
-                <strong className="text-[var(--ink)]">45 minutos</strong>, nota mínima{' '}
-                <strong className="text-[var(--ink)]">90%</strong> (máximo 3 erros) e apenas{' '}
+                cada dia + 6 casos críticos operacionais), cronômetro de{' '}
+                <strong className="text-[var(--ink)]">35 minutos</strong>, nota mínima{' '}
+                <strong className="text-[var(--ink)]">90%</strong> e apenas{' '}
                 <strong className="text-[var(--ink)]">2 tentativas</strong>.
               </li>
               <li>
-                <strong className="text-[var(--ink)]">Avaliação tudo ou nada:</strong> questões
-                com múltiplas opções corretas exigem todas as marcações certas para pontuar.
+                <strong className="text-[var(--ink)]">Avaliação tudo ou nada:</strong> questões de
+                múltipla escolha exigem todas as alternativas certas para pontuar.
               </li>
             </ul>
           </section>
 
           {allApproved && (
-            <section className="rounded-2xl border-2 border-[var(--accent)] bg-[var(--surface)] p-6 space-y-3">
+            <section className="rounded-2xl border-2 border-[var(--accent)] bg-[var(--surface)] p-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-xl bg-[var(--accent-soft)] text-[var(--accent)] grid place-items-center shrink-0">
-                    <Award className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-[var(--accent)]">
-                      Certificação Concluída
-                    </p>
-                    <h2 className="text-xl font-bold">
-                      {traineeName || 'Colaboradora'} — Aprovado(a) como Trainee em todos os
-                      subsetores
-                    </h2>
+                <div className="space-y-2">
+                  <ClickCannabisLogo subtitle="Certificação Oficial Trainee" />
+                  <div className="flex items-center gap-3 pt-1">
+                    <div className="h-12 w-12 rounded-xl bg-[var(--accent-soft)] text-[var(--accent)] grid place-items-center shrink-0">
+                      <Award className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-[var(--accent)]">
+                        Certificação Trainee Concluída
+                      </p>
+                      <h2 className="text-xl font-bold">
+                        {activeCollaborator} — Aprovada em todos os 7 subsetores ClickCannabis
+                      </h2>
+                    </div>
                   </div>
                 </div>
                 <button
@@ -817,25 +1135,32 @@ export function TraineeView({
                   Imprimir certificado
                 </button>
               </div>
-              <div className="flex flex-wrap items-center gap-4 text-sm text-[var(--muted)] font-mono-num pt-2 border-t border-[var(--line)]">
-                <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
-                  <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
-                  Dia 1: {progress.best.d1}%
-                </span>
-                <span>·</span>
-                <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
-                  <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
-                  Dia 2: {progress.best.d2}%
-                </span>
-                <span>·</span>
-                <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
-                  <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
-                  Dia 3: {progress.best.d3}%
-                </span>
-                <span>·</span>
-                <span className="inline-flex items-center gap-1.5 text-[var(--ink)] font-bold">
-                  <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
-                  Prova Final: {progress.best.final}%
+              <div className="flex flex-wrap items-center justify-between gap-4 text-sm text-[var(--muted)] font-mono-num pt-2 border-t border-[var(--line)]">
+                <div className="flex flex-wrap items-center gap-4">
+                  <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
+                    <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
+                    Dia 1: {progress.best.d1}%
+                  </span>
+                  <span>·</span>
+                  <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
+                    <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
+                    Dia 2: {progress.best.d2}%
+                  </span>
+                  <span>·</span>
+                  <span className="inline-flex items-center gap-1.5 text-[var(--ink)]">
+                    <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
+                    Dia 3: {progress.best.d3}%
+                  </span>
+                  <span>·</span>
+                  <span className="inline-flex items-center gap-1.5 text-[var(--ink)] font-bold">
+                    <CheckCircle2 className="h-4 w-4 text-[var(--accent)]" />
+                    Prova Final: {progress.best.final}%
+                  </span>
+                </div>
+                <span className="text-xs font-sans">
+                  Validação: Treinadora {leadership.treinadora || cfg.madrinha.nome || 'Andréia'} ·
+                  Coord. {leadership.coordenadora} · Lid. {leadership.lideranca} · Lid. Trein.{' '}
+                  {leadership.liderancaTreinamento}
                 </span>
               </div>
             </section>
@@ -843,20 +1168,35 @@ export function TraineeView({
         </div>
       )}
 
+      {tab === 'equipe' && renderTeamMatrix()}
+
       {(tab === 'd1' || tab === 'd2' || tab === 'd3') && renderDayTab(tab)}
 
       {tab === 'final' &&
         (isUnlocked('final') ? (
           renderQuizBlock('final')
         ) : (
-          <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 flex items-center gap-3">
-            <Lock className="h-5 w-5 text-[var(--muted)] shrink-0" />
-            <div>
-              <h2 className="text-base font-bold">Prova Final bloqueada</h2>
-              <p className="text-sm text-[var(--muted)]">
-                Aprove os Dias 1, 2 e 3 (mínimo 80% em cada) para desbloquear a Prova Final Hard.
-              </p>
+          <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Lock className="h-5 w-5 text-[var(--muted)] shrink-0" />
+              <div>
+                <h2 className="text-base font-bold">
+                  Prova Final Hard bloqueada para {activeCollaborator}
+                </h2>
+                <p className="text-sm text-[var(--muted)]">
+                  Aprove os Dias 1, 2 e 3 (mínimo {TRN_MIN.d1}% em cada) para desbloquear a Prova
+                  Final Hard.
+                </p>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => onOpenQuickSim('solicitacoes')}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-3.5 py-2 text-xs font-semibold whitespace-nowrap"
+            >
+              <Bot className="h-3.5 w-3.5" />
+              Treinar no Simulador
+            </button>
           </section>
         ))}
     </div>

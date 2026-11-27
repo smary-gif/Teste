@@ -7,11 +7,16 @@ import {
   Heart,
   LayoutList,
   ListChecks,
+  LogOut,
   Moon,
+  RefreshCw,
   Settings,
   Sun,
 } from 'lucide-react';
+import type { GoogleAuthProfile } from '../lib/googleAuth';
 import type { AppView } from '../types';
+import { ClickCannabisLogo } from './ClickCannabisLogo';
+import { GoogleSignInButton } from './GoogleSignInButton';
 
 interface SidebarProps {
   currentView: AppView;
@@ -23,7 +28,12 @@ interface SidebarProps {
   darkMode: boolean;
   onToggleTheme: () => void;
   traineeName: string;
+  collaborators: string[];
   onChangeTraineeName: (name: string) => void;
+  googleUser: GoogleAuthProfile | null;
+  googleAuthLoading: boolean;
+  onGoogleSignIn: () => void;
+  onGoogleSignOut: () => void;
 }
 
 interface NavItemDef {
@@ -40,6 +50,11 @@ const NAV_ITEMS: NavItemDef[] = [
     label: 'Treinamento Trainee (3 dias)',
     icon: <Award className="h-4 w-4 shrink-0" />,
     section: 'Programa Trainee',
+  },
+  {
+    id: 'reciclagem',
+    label: 'Reciclagem (Veteranas)',
+    icon: <RefreshCw className="h-4 w-4 shrink-0" />,
   },
   {
     id: 'simulacao',
@@ -101,23 +116,21 @@ export function Sidebar({
   darkMode,
   onToggleTheme,
   traineeName,
+  collaborators,
   onChangeTraineeName,
+  googleUser,
+  googleAuthLoading,
+  onGoogleSignIn,
+  onGoogleSignOut,
 }: SidebarProps) {
   return (
     <aside
       className="no-print bg-[var(--nav)] text-[var(--nav-ink)] flex md:flex-col gap-1 px-3 py-2.5 md:py-5 md:px-3.5 md:sticky md:top-0 md:h-screen overflow-x-auto md:overflow-y-auto shrink-0 border-b md:border-b-0 md:border-r border-[#1c402a]"
       aria-label="Navegação principal"
     >
-      <div className="hidden md:flex items-center gap-2.5 px-1.5 pb-3 border-b border-[rgba(143,232,156,0.14)]">
-        <div className="h-9 w-9 rounded-xl bg-[var(--mint)] text-[#0f2a1b] grid place-items-center shrink-0 font-display font-bold text-sm">
-          CT
-        </div>
-        <div className="min-w-0">
-          <p className="font-display font-bold text-sm leading-tight truncate text-[var(--nav-ink)]">
-            {portalName}
-          </p>
-          <p className="text-[11px] text-[var(--nav-muted)] truncate">{portalSub}</p>
-        </div>
+      <div className="hidden md:flex flex-col gap-2 px-1.5 pb-3.5 border-b border-[rgba(143,232,156,0.14)]">
+        <ClickCannabisLogo onDark subtitle={portalName} />
+        <p className="text-[11px] text-[var(--nav-muted)] truncate pl-1">{portalSub}</p>
       </div>
 
       <div className="flex md:flex-col gap-1 md:mt-2 flex-1">
@@ -150,16 +163,71 @@ export function Sidebar({
 
       <div className="hidden md:flex flex-col gap-2.5 pt-3 mt-3 border-t border-[rgba(143,232,156,0.14)]">
         <div className="px-1">
-          <label className="block text-[10px] font-semibold text-[var(--nav-muted)] mb-1">
-            Nome do(a) Trainee
-          </label>
-          <input
-            type="text"
-            value={traineeName}
-            onChange={(e) => onChangeTraineeName(e.target.value)}
-            placeholder="Seu nome completo"
-            className="w-full rounded-lg bg-[rgba(255,255,255,0.08)] border border-[rgba(143,232,156,0.2)] px-2.5 py-1.5 text-xs text-[var(--nav-ink)] placeholder:text-[var(--nav-muted)] focus:outline-none focus:border-[var(--mint)]"
-          />
+          {googleUser ? (
+            <div className="rounded-lg bg-[#102d1d] border border-[rgba(143,232,156,0.25)] px-2.5 py-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                {googleUser.photoURL ? (
+                  <img
+                    src={googleUser.photoURL}
+                    alt={googleUser.displayName}
+                    referrerPolicy="no-referrer"
+                    className="h-6 w-6 rounded-full object-cover shrink-0"
+                  />
+                ) : (
+                  <span className="h-6 w-6 rounded-full bg-[var(--mint)] text-[#0f2a1b] text-[11px] font-bold grid place-items-center shrink-0">
+                    {googleUser.displayName.charAt(0).toUpperCase()}
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-[var(--nav-ink)] truncate">
+                    {googleUser.displayName}
+                  </p>
+                  <p className="text-[10px] text-[var(--nav-muted)] truncate">{googleUser.email}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onGoogleSignOut}
+                title="Sair da conta Google"
+                aria-label="Sair da conta Google"
+                className="h-6 w-6 rounded-md grid place-items-center text-[var(--nav-muted)] hover:text-white shrink-0"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <GoogleSignInButton
+              size="sm"
+              label="Acessar com o Google"
+              loading={googleAuthLoading}
+              onClick={onGoogleSignIn}
+              className="w-full"
+            />
+          )}
+        </div>
+
+        <div className="px-1">
+          <span className="block text-[10px] font-semibold text-[var(--nav-muted)] mb-1">
+            Processo individual ativo
+          </span>
+          {googleUser ? (
+            <div className="w-full rounded-lg bg-[#102d1d] border border-[rgba(143,232,156,0.25)] px-2.5 py-1.5 text-xs font-semibold text-[var(--nav-ink)] truncate">
+              {traineeName}
+            </div>
+          ) : (
+            <select
+              value={traineeName}
+              onChange={(e) => onChangeTraineeName(e.target.value)}
+              aria-label="Selecionar colaboradora ativa"
+              className="w-full rounded-lg bg-[#102d1d] border border-[rgba(143,232,156,0.25)] px-2.5 py-1.5 text-xs text-[var(--nav-ink)] focus:outline-none focus:border-[var(--mint)]"
+            >
+              {collaborators.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-2 px-1">

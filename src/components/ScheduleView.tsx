@@ -1,8 +1,19 @@
 import React, { useState } from 'react';
-import { TR_DIAS, TR_HOL, TR_NIV, TR_SUBS } from '../data/defaults';
+import { Bot } from 'lucide-react';
+import { DEFAULT_LEADERSHIP, TR_DIAS, TR_HOL, TR_NIV, TR_SUBS } from '../data/defaults';
 import type { CronoRecord, PortalConfig } from '../types';
 import { cloneData, fmtTs, initials, norm, pad } from '../utils/helpers';
 import { StatusBadge, type BadgeTone } from './StatusBadge';
+
+const SUB_TO_KEY: Record<string, string> = {
+  'Chat geral': 'geral',
+  Agendamento: 'agendamento',
+  Reagendamento: 'reagendamento',
+  Confirmação: 'confirmacao',
+  'Suporte aos pacientes': 'andamento',
+  'Suporte aos médicos': 'medicos',
+  Solicitação: 'solicitacoes',
+};
 
 interface ScheduleViewProps {
   cfg: PortalConfig;
@@ -11,6 +22,7 @@ interface ScheduleViewProps {
   onSaveRecord: (personName: string, rec: CronoRecord) => void;
   isAdmin: boolean;
   traineeName: string;
+  onOpenQuickSim?: (deptKey?: string) => void;
   onToast: (msg: string) => void;
 }
 
@@ -38,13 +50,25 @@ export function ScheduleView({
   onSaveRecord,
   isAdmin,
   traineeName,
+  onOpenQuickSim,
   onToast,
 }: ScheduleViewProps) {
   const [tab, setTab] = useState<'crono' | 'acomp'>('crono');
   const [selectedPerson, setSelectedPerson] = useState<string>('');
   const [draftMap, setDraftMap] = useState<Record<string, CronoRecord>>({});
 
-  const ordem = cfg.treinoOrdem;
+  const ordem = React.useMemo(() => {
+    const base = [...cfg.treinoOrdem];
+    const cleanMe = traineeName.trim();
+    if (
+      cleanMe &&
+      !base.some((n) => norm(n).split(' ')[0] === norm(cleanMe).split(' ')[0])
+    ) {
+      base.unshift(cleanMe);
+    }
+    return base;
+  }, [cfg.treinoOrdem, traineeName]);
+
   const inicio = cfg.treinoInicio;
   const todayIso = toIso(new Date());
 
@@ -121,15 +145,19 @@ export function ScheduleView({
   };
 
   const handleSavePerson = () => {
-    if (!isAdmin) return;
     const payload: CronoRecord = {
       ...activeDraft,
       nome: activeName,
       at: Date.now(),
-      por: cfg.madrinha.nome || 'Instrutora',
+      por: isAdmin ? cfg.madrinha.nome || 'Instrutora' : traineeName || activeName,
     };
     onSaveRecord(activeName, payload);
-    onToast(`Acompanhamento de ${activeName} salvo.`);
+    setDraftMap((prev) => {
+      const next = { ...prev };
+      delete next[activeName];
+      return next;
+    });
+    onToast(`Acompanhamento de ${activeName} salvo com sucesso.`);
   };
 
   return (
@@ -145,14 +173,26 @@ export function ScheduleView({
 
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 flex flex-wrap items-center gap-4">
         <div className="h-12 w-12 rounded-full bg-[var(--accent-soft)] text-[var(--accent)] font-bold text-base grid place-items-center shrink-0">
-          {initials(cfg.madrinha.nome)}
+          {initials((cfg.lideranca || DEFAULT_LEADERSHIP).treinadora || cfg.madrinha.nome)}
         </div>
-        <div>
+        <div className="space-y-0.5">
           <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent)] block">
-            Instrutora do treinamento
+            Liderança & Treinamento ClickCannabis
           </span>
-          <strong className="text-base block">{cfg.madrinha.nome}</strong>
-          <span className="text-xs text-[var(--muted)]">{cfg.madrinha.cargo}</span>
+          <strong className="text-sm block">
+            Treinadora: {(cfg.lideranca || DEFAULT_LEADERSHIP).treinadora || cfg.madrinha.nome} ·
+            Coordenação: {(cfg.lideranca || DEFAULT_LEADERSHIP).coordenadora}
+          </strong>
+          <span className="text-xs text-[var(--muted)] block">
+            Liderança:{' '}
+            <strong className="text-[var(--ink)]">
+              {(cfg.lideranca || DEFAULT_LEADERSHIP).lideranca}
+            </strong>{' '}
+            · Liderança em treinamento:{' '}
+            <strong className="text-[var(--ink)]">
+              {(cfg.lideranca || DEFAULT_LEADERSHIP).liderancaTreinamento}
+            </strong>
+          </span>
         </div>
 
         <div className="ml-auto flex flex-wrap gap-3">
@@ -370,15 +410,20 @@ export function ScheduleView({
                   {fmtDayMonth(activeWeek.to)}
                 </p>
               </div>
-              {isAdmin && (
+              <div className="flex items-center gap-2">
+                {draftMap[activeName] && (
+                  <span className="text-[11px] font-semibold text-[var(--warn)]">
+                    Alterações pendentes
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={handleSavePerson}
-                  className="rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-xs font-semibold"
+                  className="rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-xs font-semibold hover:brightness-105"
                 >
                   Salvar acompanhamento
                 </button>
-              )}
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -397,12 +442,25 @@ export function ScheduleView({
                     const s = activeDraft.subs[sub] || {};
                     return (
                       <tr key={sub}>
-                        <td className="py-2.5 px-2 font-semibold">{sub}</td>
+                        <td className="py-2.5 px-2 font-semibold">
+                          <div className="flex items-center justify-between gap-2">
+                            <span>{sub}</span>
+                            {onOpenQuickSim && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenQuickSim(SUB_TO_KEY[sub] || 'geral')}
+                                className="inline-flex items-center gap-1 rounded-md border border-[var(--line)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent)] hover:border-[var(--accent)] whitespace-nowrap"
+                              >
+                                <Bot className="h-3 w-3" />
+                                Simular
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-2.5 px-2">
-                          <label className="inline-flex items-center gap-1.5">
+                          <label className="inline-flex items-center gap-1.5 cursor-pointer">
                             <input
                               type="checkbox"
-                              disabled={!isAdmin}
                               checked={Boolean(s.teoria)}
                               onChange={(e) => mutateDraftSub(sub, 'teoria', e.target.checked)}
                               className="accent-[var(--accent)]"
@@ -411,10 +469,9 @@ export function ScheduleView({
                           </label>
                         </td>
                         <td className="py-2.5 px-2 space-y-1">
-                          <label className="inline-flex items-center gap-1.5">
+                          <label className="inline-flex items-center gap-1.5 cursor-pointer">
                             <input
                               type="checkbox"
-                              disabled={!isAdmin}
                               checked={Boolean(s.pratica)}
                               onChange={(e) => mutateDraftSub(sub, 'pratica', e.target.checked)}
                               className="accent-[var(--accent)]"
@@ -423,7 +480,6 @@ export function ScheduleView({
                           </label>
                           <input
                             type="date"
-                            disabled={!isAdmin}
                             value={s.pData || ''}
                             onChange={(e) => mutateDraftSub(sub, 'pData', e.target.value)}
                             className="block rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px]"
@@ -431,7 +487,6 @@ export function ScheduleView({
                         </td>
                         <td className="py-2.5 px-2">
                           <select
-                            disabled={!isAdmin}
                             value={s.nivel || ''}
                             onChange={(e) => mutateDraftSub(sub, 'nivel', e.target.value)}
                             className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-xs"
@@ -446,10 +501,9 @@ export function ScheduleView({
                         <td className="py-2.5 px-2">
                           <input
                             type="text"
-                            disabled={!isAdmin}
                             value={s.obs || ''}
                             onChange={(e) => mutateDraftSub(sub, 'obs', e.target.value)}
-                            placeholder={isAdmin ? 'Ex.: revisar atalho /devido' : ''}
+                            placeholder="Ex.: revisar atalho /devido"
                             className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-xs"
                           />
                         </td>
@@ -465,9 +519,9 @@ export function ScheduleView({
                 <span>Observações gerais</span>
                 <textarea
                   rows={3}
-                  disabled={!isAdmin}
                   value={activeDraft.obsGeral || ''}
                   onChange={(e) => mutateDraftRoot('obsGeral', e.target.value)}
+                  placeholder="Registre observações, pontos fortes ou dúvidas para revisar..."
                   className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] p-2.5 text-xs text-[var(--ink)] font-normal"
                 />
               </label>
@@ -475,7 +529,6 @@ export function ScheduleView({
               <label className="text-xs font-semibold text-[var(--muted)] space-y-1">
                 <span>Situação</span>
                 <select
-                  disabled={!isAdmin}
                   value={activeDraft.statusManual || ''}
                   onChange={(e) => mutateDraftRoot('statusManual', e.target.value)}
                   className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--ink)] font-normal"

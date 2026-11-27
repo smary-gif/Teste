@@ -93,6 +93,41 @@ export const ATEND_TAB: Record<AtendStatus, AtendTabKey> = {
   Fechado: 'finalizados',
 };
 
+export function isConversationClosed(atend: AtendStatus): boolean {
+  return atend === 'Resolvido' || atend === 'Fechado';
+}
+
+export function isOperatorClosingMessage(text: string, cmd: string | null): boolean {
+  if (cmd === '/faltou') return true;
+  const n = norm(text).trim();
+  if (!n) return false;
+  return (
+    /\b(encerrando|encerrado|atendimento concluido|finalizando|finalizado|fico a disposicao|estamos a disposicao|qualquer duvida.{0,25}(chamar|disposicao|aqui)|tenha um (otimo|bom|excelente) (dia|atendimento|retorno)|excelente (dia|tarde|noite|semana)|otimo (dia|atendimento)|ate logo|ate mais)\b/i.test(
+      n
+    ) ||
+    (!n.includes('?') &&
+      /\b(bom dia|boa tarde|boa noite|tchau|obrigad[oa] pelo contato)\b/i.test(n) &&
+      n.length > 18)
+  );
+}
+
+export function isPatientClosingReply(
+  replyText: string,
+  isLastScriptedReply: boolean,
+  operatorClosed: boolean
+): boolean {
+  if (operatorClosed) return true;
+  const n = norm(replyText).trim();
+  if (!n) return false;
+  if (isLastScriptedReply && !n.includes('?')) return true;
+  return (
+    !n.includes('?') &&
+    /\b(muito obrigad[oa]|obrigad[oa] pela ajuda|perfeito,?\s*obrigad[oa]|combinado,?\s*obrigad[oa]|certo,?\s*obrigad[oa]|tudo certo,?\s*obrigad[oa]|entendi,?\s*(muito )?obrigad[oa]|vou seguir assim|ate a consulta|ate logo|tchau)\b/i.test(
+      n
+    )
+  );
+}
+
 export function fillTemplate(template: string, p: PatientCase): string {
   return String(template || '')
     .replaceAll('{$first_name}', p.first)

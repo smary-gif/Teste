@@ -3,7 +3,7 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,7 +44,7 @@ function extractApiError(err: unknown): { status: number; message: string } {
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '15mb' }));
 
   app.get('/api/ai/status', (_req: Request, res: Response) => {
     const ai = getAiClient();
@@ -241,6 +241,178 @@ Dê um parecer objetivo em português do Brasil com:
         },
       });
       res.json({ feedback: (response.text || '').trim() });
+    } catch (err) {
+      const parsed = extractApiError(err);
+      res.status(parsed.status).json({ error: parsed.message });
+    }
+  });
+
+  app.post('/api/ai/analyze-voice', async (req: Request, res: Response) => {
+    const ai = getAiClient();
+    if (!ai) {
+      res.status(503).json({
+        error: 'GEMINI_API_KEY não configurada no servidor para processar a amostra de voz.',
+      });
+      return;
+    }
+
+    const { audioBase64, mimeType, speakerName } = req.body as {
+      audioBase64?: string;
+      mimeType?: string;
+      speakerName?: string;
+    };
+
+    if (!audioBase64 || typeof audioBase64 !== 'string') {
+      res.status(400).json({ error: 'Áudio da amostra não enviado.' });
+      return;
+    }
+
+    const cleanMime =
+      typeof mimeType === 'string' && mimeType.startsWith('audio/')
+        ? mimeType.split(';')[0]
+        : 'audio/webm';
+
+    try {
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: cleanMime,
+                data: audioBase64,
+              },
+            },
+            {
+              text: `Analise esta gravação de voz de ${speakerName || 'uma colaboradora'} em português do Brasil para configurar a narração da IA nos vídeos e treinamentos da ClickCannabis.
+Extraia:
+1) transcript: transcrição fiel do que foi falado.
+2) timbre: descrição curta em português do timbre e qualidade vocal (ex: "Voz feminina clara, acolhedora e firme").
+3) pace: ritmo predominante ("pausado", "moderado" ou "dinâmico").
+4) matchedBaseVoice: escolha a voz base que mais se aproxima do registro vocal dentre exatamente: "Kore" (feminina clara/equilibrada), "Zephyr" (feminina suave/brilhante), "Puck" (ágil/expressiva), "Charon" (grave/serena), "Fenrir" (grave/firme).
+5) ttsStylePrompt: instrução em inglês detalhada para direcionar síntese de fala (Voice Design) reproduzindo esse timbre, entonação, velocidade e naturalidade em português do Brasil.
+6) summary: 1 frase curta em português resumindo o perfil vocal captado.`,
+            },
+          ],
+        },
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              transcript: { type: Type.STRING },
+              timbre: { type: Type.STRING },
+              pace: { type: Type.STRING },
+              matchedBaseVoice: { type: Type.STRING },
+              ttsStylePrompt: { type: Type.STRING },
+              summary: { type: Type.STRING },
+            },
+            required: ['transcript', 'timbre', 'pace', 'matchedBaseVoice', 'ttsStylePrompt', 'summary'],
+          },
+        },
+      });
+
+      const parsed = JSON.parse((response.text || '{}').trim()) as {
+        transcript?: string;
+        timbre?: string;
+        pace?: string;
+        matchedBaseVoice?: string;
+        ttsStylePrompt?: string;
+        summary?: string;
+      };
+
+      const allowedVoices = new Set(['Kore', 'Zephyr', 'Puck', 'Charon', 'Fenrir']);
+      const matchedBaseVoice = allowedVoices.has(parsed.matchedBaseVoice || '')
+        ? parsed.matchedBaseVoice!
+        : 'Kore';
+
+      res.json({
+        transcript: parsed.transcript || '',
+        timbre: parsed.timbre || 'Voz natural em português do Brasil',
+        pace: parsed.pace || 'moderado',
+        matchedBaseVoice,
+        ttsStylePrompt:
+          parsed.ttsStylePrompt ||
+          'Natural, warm Brazilian Portuguese speaker with clear articulation and steady moderate pace',
+        summary:
+          parsed.summary || 'Perfil vocal processado pela IA para substituir a voz padrão.',
+      });
+    } catch (err) {
+      const parsedErr = extractApiError(err);
+      res.status(parsedErr.status).json({ error: parsedErr.message });
+    }
+  });
+
+  app.post('/api/ai/tts', async (req: Request, res: Response) => {
+    const ai = getAiClient();
+    if (!ai) {
+      res.status(503).json({
+        error: 'GEMINI_API_KEY não configurada para narração neural.',
+      });
+      return;
+    }
+
+    const { text, voiceProfile } = req.body as {
+      text?: string;
+      voiceProfile?: {
+        matchedBaseVoice?: string;
+        ttsStylePrompt?: string;
+      } | null;
+    };
+    const cleanText = typeof text === 'string' ? text.trim().slice(0, 900) : '';
+    if (!cleanText) {
+      res.status(400).json({ error: 'Texto de narração vazio.' });
+      return;
+    }
+
+    const allowedVoices = new Set(['Kore', 'Zephyr', 'Puck', 'Charon', 'Fenrir']);
+    const hasCustomProfile = Boolean(voiceProfile?.ttsStylePrompt);
+    const chosenVoice =
+      voiceProfile?.matchedBaseVoice && allowedVoices.has(voiceProfile.matchedBaseVoice)
+        ? voiceProfile.matchedBaseVoice
+        : 'Kore';
+    const chosenStyle =
+      voiceProfile?.ttsStylePrompt ||
+      'Clear, warm, professional corporate trainer speaking Brazilian Portuguese';
+
+    try {
+      const response = await ai.models.generateContent({
+        model: hasCustomProfile ? 'gemini-3.8-flash-tts' : 'gemini-3.8-flash-lite-tts',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: cleanText,
+                speechMetadata: {
+                  style: chosenStyle,
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: chosenVoice },
+            },
+          },
+        },
+      });
+
+      const part = response.candidates?.[0]?.content?.parts?.[0];
+      const audioBase64 = part?.inlineData?.data;
+      if (!audioBase64) {
+        res.status(502).json({ error: 'Não foi possível gerar o áudio da cena.' });
+        return;
+      }
+
+      res.json({
+        audioBase64,
+        mimeType: part?.inlineData?.mimeType || 'audio/wav',
+      });
     } catch (err) {
       const parsed = extractApiError(err);
       res.status(parsed.status).json({ error: parsed.message });

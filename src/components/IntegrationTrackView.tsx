@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Bot } from 'lucide-react';
 import { TRILHA_STAGES } from '../data/defaults';
 import type { PortalConfig } from '../types';
 import { StatusBadge } from './StatusBadge';
@@ -15,10 +16,17 @@ interface IntegrationTrackViewProps {
   onUpdateTrilha: (personName: string, next: TrilhaStore) => void;
   isAdmin: boolean;
   traineeName: string;
+  onOpenQuickSim?: (deptKey?: string) => void;
   onToast: (msg: string) => void;
 }
 
 const EMPTY_TRILHA: TrilhaStore = { items: {}, quiz: {}, valid: {} };
+const STAGE_DEPT: Record<string, string> = {
+  e1: 'geral',
+  e2: 'agendamento',
+  e3: 'confirmacao',
+  e4: 'solicitacoes',
+};
 
 export function IntegrationTrackView({
   cfg,
@@ -26,6 +34,7 @@ export function IntegrationTrackView({
   onUpdateTrilha,
   isAdmin,
   traineeName,
+  onOpenQuickSim,
   onToast,
 }: IntegrationTrackViewProps) {
   const [selectedPerson, setSelectedPerson] = useState<string>('');
@@ -180,11 +189,23 @@ export function IntegrationTrackView({
                   </div>
                 </div>
 
-                <StatusBadge tone={valid ? 'ok' : allDone ? 'warn' : 'neutral'}>
-                  {valid
-                    ? `Validada por ${valid.by}`
-                    : `${doneCount}/${stage.items.length} itens`}
-                </StatusBadge>
+                <div className="flex flex-wrap items-center gap-2">
+                  {onOpenQuickSim && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenQuickSim(STAGE_DEPT[stage.id] || 'geral')}
+                      className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                    >
+                      <Bot className="h-3.5 w-3.5 text-[var(--accent)]" />
+                      Praticar no Simulador
+                    </button>
+                  )}
+                  <StatusBadge tone={valid ? 'ok' : allDone ? 'warn' : 'neutral'}>
+                    {valid
+                      ? `Validada por ${valid.by}`
+                      : `${doneCount}/${stage.items.length} itens`}
+                  </StatusBadge>
+                </div>
               </div>
 
               <ul className="space-y-2 pt-1">

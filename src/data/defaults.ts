@@ -3,9 +3,15 @@ import type {
   PatientCase,
   PatientScenario,
   PortalConfig,
+  ReciclagemModuleDef,
+  ReciclagemPersonProgress,
+  ReciclagemStatus,
   TeamMember,
+  TenureBracket,
   TraineeDayDef,
+  TraineeProgressStore,
   TraineeQuestionRaw,
+  TraineeSummary,
   TrilhaStage,
 } from '../types';
 import {
@@ -60,17 +66,25 @@ export const SOL_TIPOS = [
   'Laudo ou documento',
 ];
 
+export const DEFAULT_LEADERSHIP = {
+  coordenadora: 'Iris',
+  lideranca: 'Katlen Pfeifer',
+  liderancaTreinamento: 'Stephanye',
+  treinadora: 'Andréia',
+};
+
 export const DEFAULT_CONFIG: PortalConfig = {
   portalNome: 'Central de Treinamentos',
   portalSub: 'Programa Trainee · Básico ao Avançado',
+  lideranca: DEFAULT_LEADERSHIP,
   madrinha: {
     nome: 'Andréia',
-    cargo: 'Instrutora de treinamento dos subsetores',
+    cargo: 'Treinadora · ClickCannabis',
     aviso:
-      'A Andréia acompanha o treinamento intensivo de cada trainee: 3 dias de formação hard do básico ao avançado, mais prática guiada em cada departamento.',
+      'Acompanhamento oficial ClickCannabis: Treinadora Andréia conduz os treinamentos práticos junto à Liderança em treinamento Stephanye, Liderança Katlen Pfeifer e Coordenadora Iris.',
   },
   promocao:
-    'A promoção de cargo é individual. A liderança acompanha o desempenho nas simulações, entregas de turno e notas do programa Trainee para cada próximo passo.',
+    'A evolução de cada colaboradora é acompanhada individualmente pela Treinadora (Andréia), Liderança em treinamento (Stephanye), Liderança (Katlen Pfeifer) e Coordenação (Iris) com base no desempenho nas simulações, notas das provas e entregas do dia a dia.',
   filtroDepartamentos: [
     'Todos',
     'Solicitações',
@@ -224,11 +238,18 @@ export const DEFAULT_CONFIG: PortalConfig = {
       passos:
         'Escolha Suporte aos médicos e abra a conversa com o médico.\nConsulte o CRM para ver o status da consulta do paciente.\nVolte ao chat e responda ao médico, combinando o próximo passo.\nSe precisar, fale com o paciente pelo chat dele.\nRegistre tudo nas notas internas.\nAltere o status do atendimento para Resolvido.',
     },
+    {
+      tour: 'solicitacoes',
+      nome: 'Solicitações',
+      desc: 'Gerenciar demandas médicas no Kanban de 5 colunas sem orientar posologia por conta própria.',
+      passos:
+        'Na abertura do turno, priorize as colunas Em atraso (urgentes) e Intervenção antes de novos Pendentes.\nAbra uma solicitação formal ao médico para Traduzir receita, Posologia e orientações, Renovação, Alterar receita ou Laudo.\nNunca oriente ou estime dose por conta própria: aguarde validação médica legível.\nQuando o médico responder em Intervenção, confira os anexos e entregue ao paciente no chat.\nRegistre a entrega nas notas internas e só então mova o card para Concluído.',
+    },
   ],
   pacientesSimulados: 15,
   treinoInicio: '2026-11-16',
   treinoOrdem: [
-    'Rayssa', 'Aninha', 'Ana Gabriela', 'Greicy', 'Caroline Caca', 'Isabel', 'Jamily',
+    'Smary', 'Rayssa', 'Aninha', 'Ana Gabriela', 'Greicy', 'Caroline Caca', 'Isabel', 'Jamily',
     'Julyana', 'Karolyne Nani', 'Maria Julia', 'Naiara', 'Simone', 'Tuany', 'Yasmin',
   ],
 };
@@ -793,9 +814,9 @@ export function generateConsultations(patients: PatientCase[]): ConsultationRow[
 
 /* ---------- Programa Trainee Hard · 3 Dias (Básico → Intermediário → Avançado) ---------- */
 export const TRN_MIN: Record<'d1' | 'd2' | 'd3' | 'final', number> = {
-  d1: 80,
-  d2: 80,
-  d3: 80,
+  d1: 85,
+  d2: 85,
+  d3: 85,
   final: 90,
 };
 
@@ -806,7 +827,9 @@ export const TRN_MAXT: Record<'d1' | 'd2' | 'd3' | 'final', number> = {
   final: 2,
 };
 
-export const TRN_TIME_SECONDS = 45 * 60;
+export const TRN_DAY_TIME_SECONDS = 12 * 60;
+export const TRN_FINAL_TIME_SECONDS = 35 * 60;
+export const TRN_TIME_SECONDS = TRN_FINAL_TIME_SECONDS;
 
 const Q = (q: string, o: string[], c: number | number[], w: string): TraineeQuestionRaw => ({
   q,
@@ -992,6 +1015,39 @@ export const TRAINEE_DAYS: TraineeDayDef[] = [
         1,
         'Sem verificar a consulta atual não há como validar antecedência nem histórico.'
       ),
+      Q(
+        'Um paciente pede retorno médico para renovar receita, mas você nota na Negociação que a última consulta foi há 15 dias e ele quer falar com qualquer médico livre hoje. Qual é a prioridade?',
+        [
+          'Marcar com qualquer médico imediatamente para acelerar a fila',
+          'Verificar o médico da consulta anterior e priorizar o retorno com o mesmo profissional antes de oferecer alternativas',
+          'Enviar /devido mesmo sendo agendamento novo',
+          'Encaminhar ao Chat geral para validar entregas',
+        ],
+        1,
+        'Retornos devem priorizar o mesmo médico da consulta anterior para manter continuidade clínica.'
+      ),
+      Q(
+        'Em uma ligação de reagendamento a 1h45 da consulta, o paciente insiste em remarcar sem taxa alegando trabalho. Selecione todas as ações obrigatórias:',
+        [
+          'Aplicar o atalho /devido explicando a regra das 2 horas',
+          'Perguntar se prefere seguir com novo pagamento ou manter o horário original',
+          'Abrir exceção gratuita por conta própria para evitar atrito',
+          'Registrar a solicitação, horário e decisão em nota interna',
+        ],
+        [0, 1, 3],
+        'Exceções não são decididas unilateralmente pelo atendente: aplica-se /devido, oferece-se a escolha e registra-se em nota.'
+      ),
+      Q(
+        'Você respondeu uma dúvida sobre rastreio no Chat geral e o paciente agradeceu, mas na mesma mensagem pediu para remarcar a consulta de amanhã. Qual sequência está 100% correta?',
+        [
+          'Registrar nota interna do rastreio e marcar o chat como Resolvido',
+          'Registrar nota interna com o histórico do rastreio resolvido e encaminhar pelo botão Departamento para Reagendamento',
+          'Remarcar no Chat geral usando /importante sem encaminhar',
+          'Enviar /faltou para encerrar o protocolo antigo',
+        ],
+        1,
+        'Resolva e documente o escopo do Chat geral em nota e encaminhe ao setor responsável (Reagendamento).'
+      ),
     ],
   },
   {
@@ -1157,6 +1213,39 @@ export const TRAINEE_DAYS: TraineeDayDef[] = [
         ],
         1,
         'Esse registro mantém a fila "Em atendimento" limpa e o histórico preciso.'
+      ),
+      Q(
+        'Às 14:55, na fila de Consultas > Todas as consultas, você precisa localizar confirmações pendentes de hoje às 17:00, mas nenhuma aparece na tela. Qual é a causa operacional mais provável?',
+        [
+          'O sistema apagou as agendas após o disparo de 07:00',
+          'O filtro padrão "Status: Confirmadas" ainda está ativo, ocultando consultas Pendentes',
+          'As consultas foram movidas para Solicitações automaticamente',
+          'O horário 17:00 só aparece no CRM após a falta',
+        ],
+        1,
+        'Em Consultas > Todas as consultas, é obrigatório remover a tag "Status: Confirmadas" para enxergar Pendentes.'
+      ),
+      Q(
+        'Um paciente não acessou a sala após o link de 10 minutos e responde dizendo que está sem câmera porque o navegador bloqueou. Qual é a sequência exata de suporte? (marque todas)',
+        [
+          'Enviar /acesso orientando liberar câmera e microfone e clicar em Entrar na consulta',
+          'Se persistir sem acesso, aplicar /devido explicando a escolha entre manter horário ou pagar novo reagendamento',
+          'Mudar o atendimento imediatamente para Resolvido sem aguardar retorno',
+          'Acompanhar o status real pelo CRM (Aguardando / Em andamento / Faltou)',
+        ],
+        [0, 1, 3],
+        'Primeiro /acesso com instrução técnica; se inviável, /devido; sempre monitorando o status real no CRM.'
+      ),
+      Q(
+        'Durante a agenda cheia, dois médicos cobram pacientes simultaneamente no Suporte aos médicos. O que diferencia uma conduta sênior/líder?',
+        [
+          'Responder no chute para ganhar tempo enquanto o CRM carrega',
+          'Checar cada caso no CRM primeiro, alinhar previsão objetiva com o médico, acionar o paciente se necessário e documentar em nota interna',
+          'Pedir para os médicos aguardarem o fim do turno sem checar o CRM',
+          'Marcar ambos os pacientes como Faltou para limpar o quadro',
+        ],
+        1,
+        'Decisão baseada no status real do CRM + comunicação objetiva com médico e paciente + registro completo.'
       ),
     ],
   },
@@ -1327,6 +1416,39 @@ export const TRAINEE_DAYS: TraineeDayDef[] = [
         1,
         'Concluir exige confirmação de entrega do retorno ao paciente e registro completo.'
       ),
+      Q(
+        'Na abertura do turno há 3 cards em Pendente, 2 em Intervenção e 2 em Em atraso (um deles urgente há 48h). Qual ordem reflete gestão de nível avançado/líder?',
+        [
+          'Atender primeiro os Pendentes mais novos porque são mais rápidos',
+          'Priorizar Em atraso urgente e Intervenção (onde o paciente já aguarda ação nossa), cobrar o médico no atraso e então escoar Pendente',
+          'Limpar Concluído antes de olhar Em atraso',
+          'Marcar todos os Pendentes como urgentes para igualar o SLA',
+        ],
+        1,
+        'Liderança de fila prioriza risco de SLA: Em atraso urgente e Intervenção destravam entregas paradas.'
+      ),
+      Q(
+        'O médico devolveu uma solicitação na coluna Intervenção anexando a receita corrigida, mas com posologia escrita de forma confusa para o paciente. O que NÃO fazer e o que FAZER? (marque todas as corretas)',
+        [
+          'Nunca interpretar ou ajustar a dose por conta própria',
+          'Reenviar ao médico ou solicitar esclarecimento claro antes de entregar ao paciente',
+          'Confirmar a entrega no chat do paciente somente quando a instrução médica estiver inequívoca',
+          'Traduzir a posologia estimando gotas padrão para não atrasar o card',
+        ],
+        [0, 1, 2],
+        'Jamais interprete ou estime posologia; valide com o médico até estar 100% claro antes de concluir.'
+      ),
+      Q(
+        'Em uma auditoria de qualidade da ClickCannabis, quais itens reprovam imediatamente um atendimento? (marque todas)',
+        [
+          'Encerrar chat sem nota interna explicando o desfecho',
+          'Orientar posologia clínica sem validação médica registrada',
+          'Reagendar gratuitamente falta sem autorização e sem aplicar /devido',
+          'Consultar a Negociação antes de informar prazo de entrega',
+        ],
+        [0, 1, 2],
+        'Falta de nota, prescrição/posologia por conta própria e quebra da regra de 2h/falta são falhas graves.'
+      ),
     ],
   },
 ];
@@ -1397,6 +1519,39 @@ export const TRAINEE_INTEGRATED_POOL: TraineeQuestionRaw[] = [
     ],
     1,
     'Passagem de turno exige transparência total sobre atrasos, intervenções e retornos pendentes.'
+  ),
+  Q(
+    'Ao identificar que duas trainees novas estão esquecendo de registrar tentativas de ligação na etapa 4.4, qual é a conduta operacional correta?',
+    [
+      'Corrigir em silêncio sem dar retorno',
+      'Demonstrar o padrão em notas internas (data, hora, canal), explicar que protege o próximo atendente e acompanhar os próximos 3 atendimentos',
+      'Pedir que parem de ligar e apenas mandem mensagem',
+      'Desativar os lembretes de 07:00 para reduzir o volume',
+    ],
+    1,
+    'Boas práticas de qualidade combinam exemplo prático, orientação objetiva baseada no processo e checagem de aderência.'
+  ),
+  Q(
+    'Cenário crítico: 14:58, consulta às 15:00. O médico chama no Suporte aos médicos perguntando do paciente; no CRM o card está em Aguardando; no chat o paciente acabou de mandar que a câmera travou. Qual sequência integra os 3 fluxos sem erro?',
+    [
+      'Responder ao médico sem olhar o CRM e enviar /faltou ao paciente',
+      'Checar CRM → enviar /acesso ao paciente orientando permissão de câmera/microfone → alinhar no Suporte aos médicos que o paciente está em suporte técnico de entrada → registrar tudo em nota',
+      'Reagendar o paciente na hora sem usar /devido',
+      'Transferir o chat para Chat geral e finalizar',
+    ],
+    1,
+    'Integração real entre CRM, Suporte ao Paciente (/acesso) e Suporte ao Médico evita falsa falta e perda de consulta.'
+  ),
+  Q(
+    'Para manter o padrão de qualidade em empresa em crescimento acelerado, quais critérios garantem a conclusão do programa Trainee? (marque todas)',
+    [
+      'Domínio teórico comprovado (85%+ nos dias 1–3 e 90%+ na Prova Final Hard)',
+      'Execução prática validada em todos os 7 subsetores no Simulador',
+      'Registro completo de notas internas e uso correto dos atalhos em cada etapa',
+      'Zerar a fila encerrando chats sem nota interna para ganhar velocidade',
+    ],
+    [0, 1, 2],
+    'Crescimento sustentável une velocidade com rigor técnico, nota mínima alta e documentação impecável.'
   ),
 ];
 
@@ -1538,6 +1693,7 @@ export const TRILHA_STAGES: TrilhaStage[] = [
 ];
 
 export const EQUIPE: TeamMember[] = [
+  { apelido: 'Smary', nome: 'Smary', email: 'smary@clickcannabis.com', subsetor: 'Trainee' },
   { apelido: 'Ana', nome: 'Ana Gabriela Garcia', email: 'agarcia@clickcannabis.com', subsetor: 'Auditoria' },
   { apelido: 'Michele', nome: 'Michele Xavier', email: 'mxavier@clickcannabis.com', subsetor: 'Auditoria' },
   { apelido: 'Brenda', nome: 'Brenda Miranda', email: 'bmiranda@clickcannabis.com', subsetor: 'Auditoria' },
@@ -1585,3 +1741,524 @@ export const TR_HOL: Record<string, string> = {
 };
 
 export const TR_NIV = ['', 'Precisa reforçar', 'Em desenvolvimento', 'Domina'];
+
+export function EMPTY_TRAINEE_PROGRESS(): TraineeProgressStore {
+  return {
+    prac: {},
+    best: {},
+    tries: {},
+    date: {},
+    simSignals: {},
+    aiCasesEvaluated: 0,
+    aiCasesApproved: 0,
+  };
+}
+
+export function canonicalPersonKey(raw: string): string {
+  const n = norm(raw);
+  for (const m of EQUIPE) {
+    const mn = norm(m.nome);
+    const ma = norm(m.apelido);
+    const first = mn.split(' ')[0];
+    if (
+      n === mn ||
+      n === ma ||
+      (first && n === first) ||
+      mn.startsWith(`${n} `) ||
+      (ma && n === `${first} ${ma}`)
+    ) {
+      return mn;
+    }
+  }
+  return n;
+}
+
+export function getCollaboratorList(cfg: PortalConfig): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (n: string) => {
+    const clean = n.trim();
+    if (!clean) return;
+    const key = canonicalPersonKey(clean);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(clean);
+  };
+  cfg.treinoOrdem.forEach(push);
+  EQUIPE.forEach((m) => push(m.nome));
+  return out;
+}
+
+export function createInitialTraineeByPerson(
+  cfg: PortalConfig
+): Record<string, TraineeProgressStore> {
+  const map: Record<string, TraineeProgressStore> = {};
+  getCollaboratorList(cfg).forEach((name) => {
+    map[name] = EMPTY_TRAINEE_PROGRESS();
+  });
+  return map;
+}
+
+export function computeTraineeSummary(
+  progress: TraineeProgressStore,
+  trilha?: { items: Record<string, boolean>; quiz: Record<string, number>; valid: Record<string, unknown> }
+): TraineeSummary {
+  const d1Ok = (progress.best.d1 ?? 0) >= TRN_MIN.d1;
+  const d2Ok = (progress.best.d2 ?? 0) >= TRN_MIN.d2;
+  const d3Ok = (progress.best.d3 ?? 0) >= TRN_MIN.d3;
+  const finalOk = (progress.best.final ?? 0) >= TRN_MIN.final;
+
+  const completedStages = [d1Ok, d2Ok, d3Ok, finalOk].filter(Boolean).length;
+
+  const allPracIds = TRAINEE_DAYS.flatMap((d) => d.prat.map((p) => p.id));
+  const practicesDone = allPracIds.filter((id) => Boolean(progress.prac[id])).length;
+
+  const totalTrilhaItems = TRILHA_STAGES.reduce((acc, s) => acc + s.items.length, 0);
+  const doneTrilhaItems = trilha
+    ? TRILHA_STAGES.reduce(
+        (acc, s) => acc + s.items.filter(([id]) => Boolean(trilha.items[id])).length,
+        0
+      )
+    : 0;
+  const trilhaPct = totalTrilhaItems ? Math.round((doneTrilhaItems / totalTrilhaItems) * 100) : 0;
+
+  let currentStageLabel = 'Trainee · Dia 1 (Básico)';
+  if (finalOk) {
+    currentStageLabel = 'Trainee Certificada';
+  } else if (d1Ok && d2Ok && d3Ok) {
+    currentStageLabel = 'Etapa Final (Prova Hard)';
+  } else if (d1Ok && d2Ok) {
+    currentStageLabel = 'Trainee · Dia 3 (Avançado)';
+  } else if (d1Ok) {
+    currentStageLabel = 'Trainee · Dia 2 (Intermediário)';
+  }
+
+  return {
+    currentStageLabel,
+    completedStages,
+    totalStages: 4,
+    practicesDone,
+    totalPractices: allPracIds.length,
+    trilhaPct,
+    aiCasesApproved: progress.aiCasesApproved || 0,
+  };
+}
+
+export const RECICLAGEM_MIN = 85;
+export const RECICLAGEM_MAXT = 3;
+export const RECICLAGEM_TIME_SECONDS = 18 * 60;
+export const RECICLAGEM_CICLO_ATUAL = 'Ciclo 2026.2';
+
+export const TENURE_LABELS: Record<TenureBracket, { label: string; short: string; badge: string }> = {
+  veterana_1a: {
+    label: 'Veterana · +1 ano de casa',
+    short: '+1 ano',
+    badge: 'Veterana (+1 ano)',
+  },
+  plena_6m: {
+    label: 'Experiente · 6 a 12 meses',
+    short: '6–12 meses',
+    badge: '6–12 meses',
+  },
+  intermediaria_3m: {
+    label: 'Intermediária · 3 a 6 meses',
+    short: '3–6 meses',
+    badge: '3–6 meses',
+  },
+  recente: {
+    label: 'Recente · Em formação Trainee',
+    short: 'Recente',
+    badge: 'Recente',
+  },
+};
+
+export const RECICLAGEM_MODULES: ReciclagemModuleDef[] = [
+  {
+    id: 'rec_agenda',
+    ordem: '01',
+    titulo: 'Agenda Médica Atualizada, Liderança e Reagendamento',
+    foco: 'Alinhar a equipe veterana à regra atual da agenda médica (somente Hoje) e troca de médico.',
+    deptKey: 'reagendamento',
+    atualizacoes: [
+      'A agenda do médico abre somente no dia (Hoje). Para reagendar para outro dia, é obrigatório solicitar abertura à Liderança (Katlen Pfeifer / Stephanye / Iris) ou usar uma data específica liberada.',
+      'Ao reagendar, confira se é melhor manter o médico ou transferir para outro profissional com horário aberto no dia.',
+      'Encaminhamento completo: envie link de consulta, link de convidado ou Nota Fiscal pelo chat e pela Negociação sem precisar pedir em outro setor.',
+      'Regra das 2h permanece rígida: menos de 2h ou falta exige /devido e novo pagamento; aviso >= 2h segue sem custo.',
+    ],
+    checklist: [
+      {
+        id: 'r1_hoje',
+        text: 'Validar regra de agenda do dia vs solicitação à Liderança para outra data',
+        hint: 'Nunca prometer vaga futura sem solicitação formal à liderança ou data específica liberada.',
+      },
+      {
+        id: 'r1_medico',
+        text: 'Praticar reagendamento com troca de médico e seleção de horário disponível',
+        hint: 'Em Consultas ou Negociação, alterar médico atualiza automaticamente os horários do dia.',
+      },
+      {
+        id: 'r1_links',
+        text: 'Encaminhar link de consulta, link de convidado e Nota Fiscal no fluxo',
+        hint: 'Validar URL correta antes do envio e registrar em nota interna.',
+      },
+    ],
+  },
+  {
+    id: 'rec_confirmacao',
+    ordem: '02',
+    titulo: 'Confirmação Ativa (4.1 a 4.4) e Suporte de Sala',
+    foco: 'Eliminar vícios de confirmação passiva e padronizar o registro de tentativas.',
+    deptKey: 'confirmacao',
+    atualizacoes: [
+      'Não confiar apenas nos lembretes automáticos (véspera, 07:00 e 2h): sem retorno do paciente no dia, ligar ativamente (4.4).',
+      'Se não atender à ligação, enviar solicitação de contato e registrar horário + canal na nota interna.',
+      'Na tela Todas as Consultas, remover o filtro "Status: Confirmadas", filtrar data/hora e ajustar para 50 linhas para não perder pendentes.',
+      'Entrada em sala: /acesso (câmera e microfone), /aguarde ou /aguarde2 (atraso médico) e /faltou + nota de falta com ou sem custo.',
+    ],
+    checklist: [
+      {
+        id: 'r2_filtro',
+        text: 'Localizar consultas sem confirmação removendo o filtro padrão de Confirmadas',
+        hint: 'Evita deixar pacientes pendentes sem contato ativo no dia.',
+      },
+      {
+        id: 'r2_ativa',
+        text: 'Executar confirmação ativa 4.4 com registro de ligação e canal na nota',
+        hint: 'O próximo atendente precisa saber quantas tentativas foram feitas.',
+      },
+      {
+        id: 'r2_sala',
+        text: 'Conduzir suporte de entrada (/acesso, /aguarde2) e fechamento de falta (/faltou)',
+        hint: 'Sempre alinhar atraso médico no CRM e Suporte aos médicos.',
+      },
+    ],
+  },
+  {
+    id: 'rec_auditoria',
+    ordem: '03',
+    titulo: 'Auditoria de Qualidade, Posologia e Fila de Solicitações',
+    foco: 'Zerar erros críticos de auditoria cometidos por excesso de confiança na rotina.',
+    deptKey: 'solicitacoes',
+    atualizacoes: [
+      'Proibição absoluta: nunca estimar gotas, horários ou ajuste de dose com base em casos parecidos — abrir "Posologia e orientações" ao médico.',
+      'Ordem de prioridade na abertura do turno: Em atraso urgente → Intervenção (paciente aguardando retorno) → Pendente → Solicitado ao médico.',
+      'Só mover para Concluído quando a entrega ao paciente no chat estiver confirmada e a receita/documento legível anexado.',
+      'Encerramento limpo: nenhum chat deve ir para Resolvido sem nota interna descrevendo o desfecho.',
+    ],
+    checklist: [
+      {
+        id: 'r3_posologia',
+        text: 'Encaminhar dúvidas de posologia/dose exclusivamente ao médico via Solicitação',
+        hint: 'Mesmo veteranas nunca interpretam ou deduzem dose por conta própria.',
+      },
+      {
+        id: 'r3_sla',
+        text: 'Priorizar colunas Em atraso e Intervenção antes de escoar Pendentes novos',
+        hint: 'Garante proteção de SLA em casos que já estão aguardando retorno.',
+      },
+      {
+        id: 'r3_nota',
+        text: 'Revisar padrão ouro de nota interna (data, hora, canal, ação e desfecho)',
+        hint: 'Notas vagas como "resolvido" ou "faltou" reprovam na auditoria.',
+      },
+    ],
+  },
+  {
+    id: 'rec_crm',
+    ordem: '04',
+    titulo: 'CRM Integrado, Suporte Médico e Postura de Referência',
+    foco: 'Sincronia rápida entre paciente, CRM e médico e apoio às colaboradoras recentes.',
+    deptKey: 'medicos',
+    atualizacoes: [
+      'No CRM, atualizar o card para "Consulta em andamento" com nota interna e status Aguardando assim que o paciente entrar.',
+      'Quando o médico questionar ausência no Suporte aos médicos, checar CRM e chat do paciente antes de responder ou enviar /faltou.',
+      'Objeções sobre cobrança de reagendamento <2h exigem postura empática e firme na política da ClickCannabis, sem abrir exceções informais.',
+      'Veteranas apoiam o ritmo da operação mantendo histórico limpo para qualquer colega assumir o atendimento.',
+    ],
+    checklist: [
+      {
+        id: 'r4_crm',
+        text: 'Sincronizar CRM, Chat do paciente e Suporte aos médicos sem conflito de status',
+        hint: 'Evita marcar falta em paciente que está tentando liberar câmera/microfone.',
+      },
+      {
+        id: 'r4_objecao',
+        text: 'Tratar objeções sobre taxa de reagendamento (<2h) com empatia e regra clara',
+        hint: 'Usar /devido e oferecer remarcação mediante novo pagamento ou acionar liderança em exceções reais.',
+      },
+      {
+        id: 'r4_handoff',
+        text: 'Registrar passagem de turno completa com pendências em aberto e solicitações',
+        hint: 'Protege o turno seguinte e mantém padrão de empresa em escala.',
+      },
+    ],
+  },
+];
+
+export const RECICLAGEM_PRESET_PONTOS = [
+  'Agenda futura sem solicitação à Liderança',
+  'Nota interna incompleta na etapa 4.4',
+  'Reagendamento < 2h sem aplicar /devido',
+  'Dúvida de posologia sem abrir Solicitação médica',
+  'Chat encerrado sem registro de desfecho',
+  'Card de CRM desatualizado durante atendimento',
+];
+
+export const RECICLAGEM_QUESTION_POOL: TraineeQuestionRaw[] = [
+  {
+    q: 'Uma paciente veterana liga pedindo para reagendar a consulta de hoje para daqui a 4 dias com o mesmo médico. Pela regra operacional atual da ClickCannabis, o que é correto fazer?',
+    o: [
+      'Abrir o calendário do mês e confirmar diretamente a vaga daqui a 4 dias sem avisar ninguém',
+      'Explicar que a agenda médica abre somente no dia (Hoje); para outro dia é necessário solicitar abertura à Liderança (Katlen Pfeifer / Stephanye / Iris) ou utilizar uma data específica liberada, ou oferecer encaixe hoje com outro médico disponível',
+      'Cancelar a consulta atual e pedir para a paciente tentar novamente na próxima semana',
+      'Alterar o médico aleatoriamente para um dia futuro sem checar disponibilidade',
+    ],
+    c: 1,
+    w: 'A agenda dos médicos abre somente no dia (Hoje). Datas futuras dependem de solicitação à Liderança ou data específica liberada.',
+  },
+  {
+    q: 'Ao reagendar uma consulta hoje às 10:00, o médico atual não possui mais horários livres no dia, mas a Dra. Paula Rezende tem vaga às 15:30. Qual conduta está correta?',
+    o: [
+      'Recusar o reagendamento e mandar /devido mesmo tendo avisado com 4h de antecedência',
+      'Informar ao paciente as opções disponíveis no dia, alterar o médico responsável na tela de reagendamento para Dra. Paula Rezende às 15:30, registrar em nota e encaminhar a confirmação no chat',
+      'Encaixar no horário antigo do médico sem disponibilidade',
+      'Encerrar o atendimento como Resolvido sem atualizar o sistema',
+    ],
+    c: 1,
+    w: 'Na tela de reagendamento é possível alterar o médico responsável para visualizar os horários abertos do dia e atualizar o agendamento.',
+  },
+  {
+    q: 'Um paciente solicita no chat o link para um familiar acompanhar a teleconsulta e também o comprovante fiscal do atendimento pago. O que você deve encaminhar?',
+    o: [
+      'Enviar o link exclusivo do médico para o familiar e dizer que não existe Nota Fiscal',
+      'Encaminhar o Link de Convidado para o acompanhante e a Nota Fiscal emitida diretamente pelo menu da consulta/Negociação, registrando em nota',
+      'Pedir para o paciente criar outro cadastro para o convidado',
+      'Enviar apenas o link da anamnese de recorrência',
+    ],
+    c: 1,
+    w: 'A operação dispõe de Link de Consulta (paciente), Link de Convidado (acompanhante) e Nota Fiscal para encaminhamento direto.',
+  },
+  {
+    q: 'Na rotina de Confirmação (etapa 4.4), uma atendente veterana confiou apenas no disparo automático das 07:00 e de 2h antes. O paciente não respondeu e faltou. Onde houve falha operacional?',
+    o: [
+      'Nenhuma falha, pois os disparos automáticos substituem a confirmação humana',
+      'Faltou a confirmação ativa (4.4): sem retorno do paciente no dia, é obrigatório ligar, enviar pedido de contato se não atender e registrar todas as tentativas nas notas',
+      'A falha foi não ter enviado /faltou antes do horário da consulta',
+      'Deveria ter cancelado a consulta às 07:05',
+    ],
+    c: 1,
+    w: 'Os lembretes automáticos não substituem a confirmação ativa da etapa 4.4 quando o paciente não responde.',
+  },
+  {
+    q: 'Ao abrir Consultas > Todas as consultas para checar a fila do dia, quais ajustes garantem que nenhuma consulta pendente fique oculta?',
+    o: [
+      'Manter o filtro "Status: Confirmadas" e visualizar apenas as primeiras 10 linhas',
+      'Remover o filtro "Status: Confirmadas", filtrar o dia e intervalo de horário desejados e expandir a exibição para 50 linhas',
+      'Filtrar apenas "Realizadas" e ordenar por médico',
+      'Olhar somente a aba Histórico de consultas',
+    ],
+    c: 1,
+    w: 'O filtro padrão mostra apenas Confirmadas em 10 linhas; removê-lo e ampliar para 50 linhas revela pendências reais.',
+  },
+  {
+    q: 'Faltando 40 minutos para a consulta, o paciente pede reagendamento alegando imprevisto no trabalho e diz que "sempre reagendou de graça". Como uma colaboradora sênior deve conduzir? (marque todas as corretas)',
+    o: [
+      'Aplicar a regra das 2 horas enviando /devido com clareza e cordialidade, informando a necessidade de novo pagamento',
+      'Não abrir exceção informal por conta própria nem apagar o registro do pedido',
+      'Registrar a solicitação, a regra informada e o desfecho completo nas notas internas',
+      'Liberar reagendamento gratuito para evitar desgaste com paciente antigo',
+    ],
+    c: [0, 1, 2],
+    w: 'Regra de 2h vale para todos os pacientes; exceções reais passam pela Liderança, nunca por decisão informal isolada.',
+  },
+  {
+    q: 'Na abertura do turno em Solicitações, há cards em todas as colunas: 2 em "Em atraso" (1 urgente há 36h), 3 em "Intervenção", 4 em "Pendente" e 2 em "Solicitado ao médico". Qual deve ser a sequência de ataque?',
+    o: [
+      'Atender os 4 Pendentes primeiro para zerar a coluna de entrada',
+      'Tratar primeiro "Em atraso" (especialmente urgente) cobrando retorno médico e "Intervenção" (paciente aguardando nossa entrega/ajuste), e depois escoar "Pendente"',
+      'Mover tudo de "Em atraso" para "Concluído" para limpar o indicador',
+      'Responder apenas os cards sem anexo',
+    ],
+    c: 1,
+    w: 'Gestão de fila sênior prioriza SLA vencido/em risco ("Em atraso" e "Intervenção") antes de novas entradas.',
+  },
+  {
+    q: 'Uma paciente envia foto da receita dizendo: "Estou tomando 5 gotas, mas sinto pouca resposta. Posso subir para 10 gotas hoje?". Você já viu o médico orientar isso para outros pacientes. O que fazer?',
+    o: [
+      'Autorizar 10 gotas porque é uma dúvida recorrente e agiliza a fila',
+      'Explicar que não podemos orientar ou alterar dosagem, registrar a dúvida e abrir Solicitação ("Posologia e orientações") para validação do médico responsável',
+      'Sugerir aumentar para 7 gotas como meio-termo seguro',
+      'Encerrar o chat com /confirmacao',
+    ],
+    c: 1,
+    w: 'Jamais oriente, estime ou ajuste posologia clínica; toda conduta terapêutica pertence ao médico via Solicitação.',
+  },
+  {
+    q: 'Às 14:04 (consulta das 14:00), o médico cobra no Suporte aos médicos: "Paciente João ainda não entrou, posso encerrar?". O que você verifica antes de responder? (marque todas as corretas)',
+    o: [
+      'Consultar o card do paciente no CRM e o chat dele para checar se enviou mensagem de erro de câmera/microfone',
+      'Se o paciente estiver tentando entrar, enviar /acesso ao paciente e alinhar com o médico para aguardar o suporte técnico antes de dar falta',
+      'Se não houve contato e passou da tolerância de 5 minutos, registrar nota de falta, enviar /faltou ao paciente e confirmar ao médico',
+      'Responder ao médico "pode encerrar" sem olhar o CRM nem o chat do paciente',
+    ],
+    c: [0, 1, 2],
+    w: 'Sempre cruze CRM + chat do paciente antes de confirmar falta ao médico, evitando perda de consulta por erro técnico.',
+  },
+  {
+    q: 'Em qual situação o atalho /aguarde2 deve ser utilizado?',
+    o: [
+      'Antes do paciente entrar na sala de teleconsulta',
+      'Quando o paciente já acessou a sala (card em Aguardando no CRM), mas o médico ainda está finalizando o atendimento anterior e atrasou para entrar',
+      'Para cobrar pagamento de reagendamento sem aviso prévio',
+      'Logo após o paciente faltar sem justificativa',
+    ],
+    c: 1,
+    w: '/aguarde2 tranquiliza o paciente que já está na sala aguardando a entrada do médico.',
+  },
+  {
+    q: 'Em uma auditoria interna feita por Ana Gabriela, Michele ou Brenda, quais registros na nota interna reprovam o atendimento?',
+    o: [
+      '"14:15 - Ligação realizada para confirmar consulta das 16h (não atendeu). Enviado pedido de contato no WhatsApp."',
+      '"Faltou." ou "Resolvido." sem horário, canal, tentativas de contato nem desfecho',
+      '"Paciente solicitou tradução de receita ilegível; aberta solicitação #402 para Dr. Marcos."',
+      '"Reagendado para hoje 17h com Dra. Helena após aviso prévio de 3h (sem custo)."',
+    ],
+    c: 1,
+    w: 'Notas genéricas sem contexto ("Faltou.", "Resolvido.") impedem a continuidade por outra atendente e reprovam na auditoria.',
+  },
+  {
+    q: 'O médico devolveu uma solicitação na coluna Intervenção com a receita anexada, porém a posologia continua ilegível/confusa. Qual a conduta correta?',
+    o: [
+      'Interpretar o texto aproximado para não devolver ao médico e concluir rápido',
+      'Não interpretar nem concluir; retornar a solicitação ao médico pedindo esclarecimento legível em texto e só enviar ao paciente após validação inequívoca',
+      'Enviar a imagem ilegível e pedir para o paciente tentar ler sozinho',
+      'Excluir o anexo e marcar como Dúvida',
+    ],
+    c: 1,
+    w: 'Só conclua uma solicitação com orientação clínica 100% legível e validada pelo médico.',
+  },
+  {
+    q: 'Ao concluir a solicitação do paciente no chat (ex.: envio de receita traduzida), quais condições são obrigatórias antes de mover o card para Concluído? (marque todas as corretas)',
+    o: [
+      'Ter enviado o retorno completo e verificado ao paciente no chat',
+      'Ter anexos corretos conferidos (sem arquivo trocado ou incompleto)',
+      'Ter registrado nota interna resumindo a entrega e atualizado o status do atendimento',
+      'Mover para Concluído assim que o médico respondeu no chat dele, antes mesmo de enviar ao paciente',
+    ],
+    c: [0, 1, 2],
+    w: 'Concluído significa que o paciente já recebeu a entrega correta e todo o histórico foi documentado.',
+  },
+  {
+    q: 'Qual é a tolerância oficial de atraso informada pelo comando /importante?',
+    o: [
+      '15 minutos de tolerância sem cobrança',
+      'Até 5 minutos de atraso na consulta',
+      '10 minutos para primeira consulta e 20 minutos para retorno',
+      'Não existe tolerância após o horário exato',
+    ],
+    c: 1,
+    w: 'A tolerância oficial da ClickCannabis é de até 5 minutos (/importante).',
+  },
+  {
+    q: 'Durante a passagem de turno de uma colaboradora veterana, o que NÃO pode faltar para quem assume o próximo horário?',
+    o: [
+      'Encerrar todos os chats em aberto às pressas sem nota para entregar a fila zerada',
+      'Listar solicitações em Atraso/Intervenção, confirmações 4.4 pendentes com tentativas já feitas e alinhamentos combinados com médicos ou Liderança',
+      'Passar apenas o número total de atendimentos realizados no dia',
+      'Deixar solicitações urgentes sem etiqueta de urgência para não assustar o próximo turno',
+    ],
+    c: 1,
+    w: 'Passagem de turno madura documenta riscos, atrasos, tentativas 4.4 e combinados com médicos/liderança.',
+  },
+  {
+    q: 'Você percebe que uma colega recém-chegada está respondendo pacientes em "Suporte aos pacientes" sem abrir a Negociação para conferir se o pedido/entrega já foi pago ou enviado. Qual postura reflete nível sênior na ClickCannabis?',
+    o: [
+      'Ignorar para não parecer invasiva, já que não é sua função',
+      'Orientar de forma acolhedora mostrando onde abrir a Negociação (Consultas e Entregas) para checar o histórico antes de responder e reforçar com a Treinadora (Andréia) se persistir',
+      'Responder no lugar dela sem explicar o motivo',
+      'Reclamar diretamente com o paciente sobre o erro da colega',
+    ],
+    c: 1,
+    w: 'Cultura de empresa em crescimento une autonomia, colaboração respeitosa entre pares e feedback alinhado à Treinadora e Liderança.',
+  },
+];
+
+export function getDefaultVeteranMeta(rawName: string): {
+  tenure: TenureBracket;
+  subsetor: string;
+} {
+  const key = canonicalPersonKey(rawName);
+  const member = EQUIPE.find((m) => canonicalPersonKey(m.nome) === key);
+  if (!member) {
+    return { tenure: 'plena_6m', subsetor: 'Confirmação' };
+  }
+  if (member.subsetor === 'Trainee' || key === 'aninha') {
+    return { tenure: 'recente', subsetor: member.subsetor };
+  }
+  if (
+    member.subsetor === 'Auditoria' ||
+    ['simone xavier', 'julyana oliveira', 'isabel bach', 'carla costa', 'greicy kelly oliveira quintela'].includes(
+      norm(member.nome)
+    )
+  ) {
+    return { tenure: 'veterana_1a', subsetor: member.subsetor };
+  }
+  return { tenure: 'plena_6m', subsetor: member.subsetor };
+}
+
+export function EMPTY_RECICLAGEM_PROGRESS(name = ''): ReciclagemPersonProgress {
+  const meta = name ? getDefaultVeteranMeta(name) : { tenure: 'plena_6m' as TenureBracket, subsetor: 'Confirmação' };
+  return {
+    tenure: meta.tenure,
+    subsetorPrincipal: meta.subsetor,
+    ciclo: RECICLAGEM_CICLO_ATUAL,
+    checklist: {},
+    examTries: 0,
+    calibracoes: [],
+  };
+}
+
+export function createInitialReciclagemByPerson(
+  cfg: PortalConfig
+): Record<string, ReciclagemPersonProgress> {
+  const map: Record<string, ReciclagemPersonProgress> = {};
+  getCollaboratorList(cfg).forEach((name) => {
+    map[name] = EMPTY_RECICLAGEM_PROGRESS(name);
+  });
+  return map;
+}
+
+export function computeReciclagemStatus(rec: ReciclagemPersonProgress): {
+  status: ReciclagemStatus;
+  checklistDone: number;
+  checklistTotal: number;
+  pct: number;
+  examPassed: boolean;
+} {
+  const allIds = RECICLAGEM_MODULES.flatMap((m) => m.checklist.map((c) => c.id));
+  const checklistDone = allIds.filter((id) => Boolean(rec.checklist[id])).length;
+  const checklistTotal = allIds.length;
+  const examPassed = (rec.examBest ?? 0) >= RECICLAGEM_MIN;
+
+  let status: ReciclagemStatus = 'Pendente';
+  if (examPassed && checklistDone === checklistTotal) {
+    status = 'Aprovada';
+  } else if (checklistDone > 0 || rec.examTries > 0 || rec.calibracoes.some((c) => !c.resolvido)) {
+    status = 'Em reciclagem';
+  }
+
+  const pct = Math.round(
+    ((checklistDone / Math.max(1, checklistTotal)) * 0.6 + (examPassed ? 0.4 : 0)) * 100
+  );
+
+  return {
+    status,
+    checklistDone,
+    checklistTotal,
+    pct,
+    examPassed,
+  };
+}
+
+
+

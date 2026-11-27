@@ -1,12 +1,21 @@
-import React, { useState } from 'react';
-import { ArrowRight, Play } from 'lucide-react';
-import type { PortalConfig } from '../types';
+import React, { useMemo, useState } from 'react';
+import { ArrowRight, Bot, Play, Video } from 'lucide-react';
+import type { AiVoiceProfile, PortalConfig } from '../types';
 import { deptKey } from '../utils/helpers';
 import { buildTourSteps } from '../data/tours';
+import { DEFAULT_CONFIG } from '../data/defaults';
+import { SUBSECTOR_VIDEOS } from '../data/subsectorVideos';
+import { SubsectorVideoPlayer } from './SubsectorVideoPlayer';
 
 interface SubsectorsViewProps {
   cfg: PortalConfig;
+  aiConfigured?: boolean;
+  speakerName?: string;
+  voiceProfile?: AiVoiceProfile | null;
+  onUpdateVoiceProfile?: (next: AiVoiceProfile | null) => void;
   onStartTour: (tourKey: string) => void;
+  onOpenQuickSim?: (deptKey?: string) => void;
+  onToast?: (msg: string) => void;
 }
 
 const SUPPORTED_TOURS = new Set([
@@ -18,15 +27,34 @@ const SUPPORTED_TOURS = new Set([
   'medicos',
 ]);
 
-export function SubsectorsView({ cfg, onStartTour }: SubsectorsViewProps) {
+export function SubsectorsView({
+  cfg,
+  aiConfigured = false,
+  speakerName = 'Colaboradora',
+  voiceProfile = null,
+  onUpdateVoiceProfile,
+  onStartTour,
+  onOpenQuickSim,
+  onToast,
+}: SubsectorsViewProps) {
   const [subTab, setSubTab] = useState(0);
   const [guideDet, setGuideDet] = useState<number | null>(null);
+  const [showVideo, setShowVideo] = useState(true);
 
-  const subs = cfg.subsetores || [];
+  const subs = useMemo(() => {
+    const base = cfg.subsetores || [];
+    const seen = new Set(base.map((s) => s.tour || deptKey(s.nome)));
+    const extras = DEFAULT_CONFIG.subsetores.filter(
+      (def) => !seen.has(def.tour || deptKey(def.nome))
+    );
+    return [...base, ...extras];
+  }, [cfg.subsetores]);
+
   const idx = Math.min(subTab, Math.max(0, subs.length - 1));
   const current = subs[idx];
   const tourKey = current ? current.tour || deptKey(current.nome) : '';
   const hasTour = SUPPORTED_TOURS.has(tourKey) && Boolean(buildTourSteps);
+  const videoScript = tourKey ? SUBSECTOR_VIDEOS[tourKey] : undefined;
   const steps = current
     ? String(current.passos || '')
         .split('\n')
@@ -40,8 +68,8 @@ export function SubsectorsView({ cfg, onStartTour }: SubsectorsViewProps) {
         <p className="text-xs text-[var(--muted)]">Desenvolvimento & Treinamento</p>
         <h1 className="text-2xl font-bold mt-0.5">Passo a Passo dos Subsetores</h1>
         <p className="text-sm text-[var(--muted)] mt-1">
-          Escolha o departamento, revise o procedimento padrão e inicie o treino guiado. As setas
-          mostram onde clicar sem travar a tela.
+          Escolha o departamento, assista à videoaula explicativa com narração, revise o
+          procedimento padrão e inicie o treino guiado no Simulador.
         </p>
       </div>
 
@@ -53,7 +81,7 @@ export function SubsectorsView({ cfg, onStartTour }: SubsectorsViewProps) {
             role="tab"
             aria-selected={idx === i}
             onClick={() => setSubTab(i)}
-            className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
+            className={`rounded-lg border px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
               idx === i
                 ? 'bg-[var(--accent)] border-[var(--accent)] text-[var(--accent-ink)]'
                 : 'bg-[var(--surface)] border-[var(--line)] hover:border-[var(--accent)]'
@@ -71,16 +99,42 @@ export function SubsectorsView({ cfg, onStartTour }: SubsectorsViewProps) {
               <h2 className="text-lg font-bold">{current.nome}</h2>
               {current.desc && <p className="text-sm text-[var(--muted)]">{current.desc}</p>}
             </div>
-            {hasTour && (
-              <button
-                type="button"
-                onClick={() => onStartTour(tourKey)}
-                className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-xs font-semibold whitespace-nowrap hover:brightness-105"
-              >
-                <Play className="h-3.5 w-3.5" />
-                Iniciar passo a passo guiado
-              </button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {videoScript && (
+                <button
+                  type="button"
+                  onClick={() => setShowVideo((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold whitespace-nowrap ${
+                    showVideo
+                      ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                      : 'border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--accent)]'
+                  }`}
+                >
+                  <Video className="h-3.5 w-3.5" />
+                  {showVideo ? 'Ocultar videoaula' : 'Assistir videoaula'}
+                </button>
+              )}
+              {onOpenQuickSim && (
+                <button
+                  type="button"
+                  onClick={() => onOpenQuickSim(tourKey || 'geral')}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                >
+                  <Bot className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  Simular rápido
+                </button>
+              )}
+              {hasTour && (
+                <button
+                  type="button"
+                  onClick={() => onStartTour(tourKey)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-xs font-semibold whitespace-nowrap hover:brightness-105"
+                >
+                  <Play className="h-3.5 w-3.5" />
+                  Iniciar passo a passo guiado
+                </button>
+              )}
+            </div>
           </div>
 
           {steps.length ? (
@@ -112,6 +166,19 @@ export function SubsectorsView({ cfg, onStartTour }: SubsectorsViewProps) {
         <div className="rounded-xl border border-dashed border-[var(--line)] p-6 text-center text-sm text-[var(--muted)]">
           Nenhum subsetor cadastrado.
         </div>
+      )}
+
+      {showVideo && videoScript && (
+        <SubsectorVideoPlayer
+          script={videoScript}
+          aiConfigured={aiConfigured}
+          speakerName={speakerName}
+          voiceProfile={voiceProfile}
+          onUpdateVoiceProfile={onUpdateVoiceProfile}
+          onPracticeTour={hasTour ? () => onStartTour(tourKey) : undefined}
+          onPracticeQuickSim={onOpenQuickSim ? () => onOpenQuickSim(tourKey || 'geral') : undefined}
+          onToast={onToast}
+        />
       )}
 
       {tourKey === 'confirmacao' && (

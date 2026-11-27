@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, MessageCircle, Paperclip, User } from 'lucide-react';
+import { Bot, ChevronDown, MessageCircle, Paperclip, User } from 'lucide-react';
 import type { PatientCase, SolStatus } from '../types';
 import { norm } from '../utils/helpers';
 import { StatusBadge, type BadgeTone } from './StatusBadge';
@@ -9,6 +9,7 @@ interface SolicitationsViewProps {
   onOpenModal: (patientId: string | null, mode: 'new' | 'edit') => void;
   onMoveStatus: (patientId: string, nextStatus: SolStatus) => void;
   onOpenChat: (patientId: string) => void;
+  onOpenQuickSim?: (deptKey?: string, patientId?: string) => void;
 }
 
 const SOL_COLUMNS: Array<{ key: SolStatus; label: string; tone: BadgeTone }> = [
@@ -44,6 +45,7 @@ export function SolicitationsView({
   onOpenModal,
   onMoveStatus,
   onOpenChat,
+  onOpenQuickSim,
 }: SolicitationsViewProps) {
   const [query, setQuery] = useState('');
   const [openPopId, setOpenPopId] = useState<string | null>(null);
@@ -75,6 +77,16 @@ export function SolicitationsView({
               aria-label="Pesquisar solicitações"
               className="w-60 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs focus:outline-none focus:border-[var(--accent)]"
             />
+            {onOpenQuickSim && (
+              <button
+                type="button"
+                onClick={() => onOpenQuickSim('solicitacoes')}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+              >
+                <Bot className="h-3.5 w-3.5 text-[var(--accent)]" />
+                Simular caso
+              </button>
+            )}
             <button
               type="button"
               data-coach="sol-modal"
@@ -201,6 +213,18 @@ export function SolicitationsView({
                           >
                             Chat do paciente
                           </button>
+                          {onOpenQuickSim && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenPopId(null);
+                                onOpenQuickSim(p.key, p.id);
+                              }}
+                              className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
+                            >
+                              Simulador rápido (aqui)
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

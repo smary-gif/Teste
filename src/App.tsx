@@ -1,25 +1,46 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AdminView } from './components/AdminView';
 import { CoachOverlay } from './components/CoachOverlay';
 import { ConsultationsView } from './components/ConsultationsView';
 import { CrmView } from './components/CrmView';
+import { GoogleAccessModal } from './components/GoogleSignInButton';
 import { IntegrationTrackView, type TrilhaStore } from './components/IntegrationTrackView';
 import { MentorshipView } from './components/MentorshipView';
+import { NegotiationModal } from './components/NegotiationModal';
+import { QuickSimulatorDrawer } from './components/QuickSimulatorDrawer';
+import { ReciclagemView } from './components/ReciclagemView';
 import { ScheduleView } from './components/ScheduleView';
 import { Sidebar } from './components/Sidebar';
 import { SimulatorView } from './components/SimulatorView';
 import { SolicitationDrawer, type SolFormState } from './components/SolicitationDrawer';
 import { SolicitationsView } from './components/SolicitationsView';
 import { SubsectorsView } from './components/SubsectorsView';
+import { TopEnterpriseBar } from './components/TopEnterpriseBar';
 import { TraineeView } from './components/TraineeView';
 import {
+  initGoogleAuth,
+  resolveCollaboratorFromGoogle,
+  signInWithGoogle,
+  signOutGoogle,
+  type GoogleAuthProfile,
+} from './lib/googleAuth';
+import {
+  canonicalPersonKey,
+  computeTraineeSummary,
+  createInitialReciclagemByPerson,
+  createInitialTraineeByPerson,
   DEFAULT_CONFIG,
+  DEFAULT_LEADERSHIP,
+  EMPTY_RECICLAGEM_PROGRESS,
+  EMPTY_TRAINEE_PROGRESS,
+  getCollaboratorList,
   TRAIN_DEPTS,
   generateConsultations,
   generatePatients,
 } from './data/defaults';
 import { buildTourSteps } from './data/tours';
 import type {
+  AiVoiceProfile,
   AppView,
   AtendTabKey,
   CoachStep,
@@ -29,6 +50,7 @@ import type {
   MentorshipComment,
   PatientCase,
   PortalConfig,
+  ReciclagemPersonProgress,
   SolStatus,
   TraineeProgressStore,
 } from './types';
@@ -62,21 +84,53 @@ const SOL_LABEL: Record<SolStatus, string> = {
 export default function App() {
   const [cfg, setCfg] = useState<PortalConfig>(() => {
     const saved = loadStorage<Partial<PortalConfig>>('ct_cfg_v1', {});
+    const needsTrainerUpdate =
+      !saved.madrinha?.nome || saved.madrinha.nome === 'Stephanye';
     return {
       ...DEFAULT_CONFIG,
       ...saved,
-      madrinha: { ...DEFAULT_CONFIG.madrinha, ...(saved.madrinha || {}) },
+      lideranca: {
+        ...DEFAULT_LEADERSHIP,
+        ...(saved.lideranca || {}),
+        treinadora: saved.lideranca?.treinadora || DEFAULT_LEADERSHIP.treinadora,
+      },
+      madrinha: needsTrainerUpdate
+        ? DEFAULT_CONFIG.madrinha
+        : { ...DEFAULT_CONFIG.madrinha, ...(saved.madrinha || {}) },
       templates: { ...DEFAULT_CONFIG.templates, ...(saved.templates || {}) },
     };
   });
+
+  const [customCollaborators, setCustomCollaborators] = useState<string[]>(() =>
+    loadStorage<string[]>('ct_custom_collabs_v1', [])
+  );
+
+  const collaborators = useMemo(() => {
+    const base = getCollaboratorList(cfg);
+    const seen = new Set(base.map((n) => canonicalPersonKey(n)));
+    const merged = [...base];
+    ['Smary', ...customCollaborators].forEach((n) => {
+      const clean = n.trim();
+      if (!clean) return;
+      const key = canonicalPersonKey(clean);
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.unshift(clean);
+      }
+    });
+    return merged;
+  }, [cfg, customCollaborators]);
 
   const [darkMode, setDarkMode] = useState<boolean>(() =>
     loadStorage<boolean>('ct_theme_v1', false)
   );
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [traineeName, setTraineeName] = useState<string>(() =>
-    loadStorage<string>('ct_trainee_name_v1', 'Trainee')
-  );
+
+  const [activeCollaborator, setActiveCollaborator] = useState<string>(() => {
+    const saved = loadStorage<string>('ct_active_collab_v1', '');
+    if (saved) return saved;
+    return 'Smary';
+  });
 
   const [view, setView] = useState<AppView>('trainee');
   const [patients, setPatients] = useState<PatientCase[]>(() => generatePatients(cfg));
@@ -87,16 +141,31 @@ export default function App() {
   const [deptFilter, setDeptFilter] = useState<string>('Solicitações');
   const [listTab, setListTab] = useState<AtendTabKey>('abertos');
   const [aiConfigured, setAiConfigured] = useState<boolean>(false);
+  const [googleUser, setGoogleUser] = useState<GoogleAuthProfile | null>(null);
+  const [googleAuthLoading, setGoogleAuthLoading] = useState<boolean>(false);
+  const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
+  const [googleModalOpen, setGoogleModalOpen] = useState<boolean>(false);
 
-  const [traineeProgress, setTraineeProgress] = useState<TraineeProgressStore>(() =>
-    loadStorage<TraineeProgressStore>('ct_trn_v1', {
-      prac: {},
-      best: {},
-      tries: {},
-      date: {},
-      simSignals: {},
-    })
-  );
+  const [traineeByPerson, setTraineeByPerson] = useState<
+    Record<string, TraineeProgressStore>
+  >(() => {
+    const savedMap = loadStorage<Record<string, TraineeProgressStore> | null>(
+      'ct_trn_by_person_v2',
+      null
+    );
+    if (savedMap) return savedMap;
+    const base = createInitialTraineeByPerson(cfg);
+    // Migrate legacy single progress if present
+    const legacy = loadStorage<TraineeProgressStore | null>('ct_trn_v1', null);
+    if (legacy) {
+      const firstKey = getCollaboratorList(cfg)[0] || 'Rayssa';
+      base[firstKey] = {
+        ...EMPTY_TRAINEE_PROGRESS(),
+        ...legacy,
+      };
+    }
+    return base;
+  });
 
   const [trilhaData, setTrilhaData] = useState<Record<string, TrilhaStore>>(() =>
     loadStorage<Record<string, TrilhaStore>>('ct_trilha_v1', {})
@@ -110,8 +179,33 @@ export default function App() {
   const [mentorshipChats, setMentorshipChats] = useState<
     Record<string, MentorshipChatMsg[]>
   >(() => loadStorage<Record<string, MentorshipChatMsg[]>>('ct_mchat_v1', {}));
+  const [reciclagemByPerson, setReciclagemByPerson] = useState<
+    Record<string, ReciclagemPersonProgress>
+  >(() => {
+    const saved = loadStorage<Record<string, ReciclagemPersonProgress> | null>(
+      'ct_reciclagem_v1',
+      null
+    );
+    return saved || createInitialReciclagemByPerson(cfg);
+  });
+
+  const [voiceProfile, setVoiceProfile] = useState<AiVoiceProfile | null>(() =>
+    loadStorage<AiVoiceProfile | null>('ct_ai_voice_profile_v1', null)
+  );
+
+  const handleUpdateVoiceProfile = useCallback((next: AiVoiceProfile | null) => {
+    setVoiceProfile(next);
+    saveStorage('ct_ai_voice_profile_v1', next);
+  }, []);
 
   const [solDrawerForm, setSolDrawerForm] = useState<SolFormState | null>(null);
+  const [crmNegPatientId, setCrmNegPatientId] = useState<string | null>(null);
+  const [quickSim, setQuickSim] = useState<{
+    open: boolean;
+    deptKey?: string;
+    patientId?: string;
+  }>({ open: false });
+
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -134,7 +228,7 @@ export default function App() {
   }, [darkMode]);
 
   useEffect(() => {
-    document.title = cfg.portalNome;
+    document.title = `ClickCannabis · ${cfg.portalNome}`;
   }, [cfg.portalNome]);
 
   useEffect(() => {
@@ -142,6 +236,150 @@ export default function App() {
       .then((r) => r.json())
       .then((d: { configured?: boolean }) => setAiConfigured(Boolean(d.configured)))
       .catch(() => setAiConfigured(false));
+  }, []);
+
+  const activeProgress: TraineeProgressStore =
+    traineeByPerson[activeCollaborator] || EMPTY_TRAINEE_PROGRESS();
+
+  const traineeSummary = useMemo(
+    () => computeTraineeSummary(activeProgress, trilhaData[activeCollaborator]),
+    [activeProgress, trilhaData, activeCollaborator]
+  );
+
+  const handleChangeCollaborator = useCallback(
+    (name: string) => {
+      setActiveCollaborator(name);
+      saveStorage('ct_active_collab_v1', name);
+      setTraineeByPerson((prev) => {
+        if (prev[name]) return prev;
+        const next = { ...prev, [name]: EMPTY_TRAINEE_PROGRESS() };
+        saveStorage('ct_trn_by_person_v2', next);
+        return next;
+      });
+      showToast(`Processo individual ativo: ${name}`);
+    },
+    [showToast]
+  );
+
+  const handleAddCollaborator = useCallback(
+    (rawName: string) => {
+      const clean = rawName.trim();
+      if (!clean) return;
+      const targetKey = canonicalPersonKey(clean);
+      const existing = collaborators.find(
+        (c) => canonicalPersonKey(c) === targetKey
+      );
+      const targetName = existing || clean;
+      if (!existing) {
+        setCustomCollaborators((prev) => {
+          const next = [
+            clean,
+            ...prev.filter((x) => canonicalPersonKey(x) !== targetKey),
+          ];
+          saveStorage('ct_custom_collabs_v1', next);
+          return next;
+        });
+      }
+      setActiveCollaborator(targetName);
+      saveStorage('ct_active_collab_v1', targetName);
+      setTraineeByPerson((prev) => {
+        if (prev[targetName]) return prev;
+        const next = { ...prev, [targetName]: EMPTY_TRAINEE_PROGRESS() };
+        saveStorage('ct_trn_by_person_v2', next);
+        return next;
+      });
+      setReciclagemByPerson((prev) => {
+        if (prev[targetName]) return prev;
+        const next = { ...prev, [targetName]: EMPTY_RECICLAGEM_PROGRESS(targetName) };
+        saveStorage('ct_reciclagem_v1', next);
+        return next;
+      });
+      showToast(`Processo individual vinculado a ${targetName}.`);
+    },
+    [collaborators, showToast]
+  );
+
+  const collaboratorsRef = useRef(collaborators);
+  collaboratorsRef.current = collaborators;
+
+  useEffect(() => {
+    const unsubscribe = initGoogleAuth(
+      (profile) => {
+        setGoogleUser(profile);
+        setGoogleAuthError(null);
+        setGoogleModalOpen(false);
+        const savedCollab = loadStorage<string>('ct_active_collab_v1', '');
+        if (!savedCollab) {
+          const matched = resolveCollaboratorFromGoogle(profile, collaboratorsRef.current);
+          handleAddCollaborator(matched);
+        }
+      },
+      () => {
+        setGoogleUser(null);
+        let dismissed = false;
+        try {
+          dismissed = sessionStorage.getItem('ct_google_gate_dismissed') === '1';
+        } catch {
+          dismissed = false;
+        }
+        if (!dismissed) {
+          setGoogleModalOpen(true);
+        }
+      }
+    );
+    return unsubscribe;
+  }, [handleAddCollaborator]);
+
+  const handleGoogleSignIn = useCallback(async () => {
+    setGoogleAuthLoading(true);
+    setGoogleAuthError(null);
+    try {
+      const { profile } = await signInWithGoogle();
+      setGoogleUser(profile);
+      setGoogleModalOpen(false);
+      try {
+        sessionStorage.setItem('ct_google_gate_dismissed', '1');
+      } catch {
+        // ignore storage restrictions
+      }
+      const matched = resolveCollaboratorFromGoogle(profile, collaboratorsRef.current);
+      handleAddCollaborator(matched);
+      showToast(`Acesso Google conectado: ${profile.displayName} (${matched})`);
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      const message =
+        code === 'auth/popup-blocked'
+          ? 'Pop-up bloqueado pelo navegador. Permita pop-ups para acessar com o Google.'
+          : code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
+            ? 'Login com Google cancelado antes da conclusão.'
+            : code === 'auth/unauthorized-domain'
+              ? 'Domínio não autorizado nas configurações de autenticação do Google.'
+              : 'Não foi possível concluir o acesso com o Google. Tente novamente.';
+      setGoogleAuthError(message);
+      showToast(message);
+    } finally {
+      setGoogleAuthLoading(false);
+    }
+  }, [handleAddCollaborator, showToast]);
+
+  const handleGoogleSignOut = useCallback(async () => {
+    try {
+      await signOutGoogle();
+      setGoogleUser(null);
+      showToast('Conta Google desconectada.');
+    } catch {
+      showToast('Erro ao desconectar a conta Google.');
+    }
+  }, [showToast]);
+
+  const handleDismissGoogleModal = useCallback(() => {
+    setGoogleModalOpen(false);
+    setGoogleAuthError(null);
+    try {
+      sessionStorage.setItem('ct_google_gate_dismissed', '1');
+    } catch {
+      // ignore storage restrictions
+    }
   }, []);
 
   const handleSelectView = (nextView: AppView) => {
@@ -173,25 +411,67 @@ export default function App() {
     }
   };
 
-  const handleUpdateTraineeProgress = (next: TraineeProgressStore) => {
-    setTraineeProgress(next);
-    saveStorage('ct_trn_v1', next);
-  };
+  const handleUpdateTraineeProgress = useCallback(
+    (next: TraineeProgressStore) => {
+      setTraineeByPerson((prev) => {
+        const updated = { ...prev, [activeCollaborator]: next };
+        saveStorage('ct_trn_by_person_v2', updated);
+        return updated;
+      });
+    },
+    [activeCollaborator]
+  );
 
-  const handleSignalPractice = useCallback((signalId: string) => {
-    setTraineeProgress((prev) => {
-      if (prev.simSignals[signalId] && prev.prac[signalId]) return prev;
-      const updated: TraineeProgressStore = {
-        ...prev,
-        simSignals: { ...prev.simSignals, [signalId]: true },
-        prac: { ...prev.prac, [signalId]: true },
-      };
-      saveStorage('ct_trn_v1', updated);
-      return updated;
-    });
+  const handleSignalPractice = useCallback(
+    (signalId: string) => {
+      setTraineeByPerson((prev) => {
+        const cur = prev[activeCollaborator] || EMPTY_TRAINEE_PROGRESS();
+        if (cur.simSignals[signalId] && cur.prac[signalId]) return prev;
+        const updatedPerson: TraineeProgressStore = {
+          ...cur,
+          simSignals: { ...cur.simSignals, [signalId]: true },
+          prac: { ...cur.prac, [signalId]: true },
+        };
+        const nextMap = { ...prev, [activeCollaborator]: updatedPerson };
+        saveStorage('ct_trn_by_person_v2', nextMap);
+        return nextMap;
+      });
+    },
+    [activeCollaborator]
+  );
+
+  const handleCaseEvaluated = useCallback(
+    (approved: boolean) => {
+      setTraineeByPerson((prev) => {
+        const cur = prev[activeCollaborator] || EMPTY_TRAINEE_PROGRESS();
+        const updatedPerson: TraineeProgressStore = {
+          ...cur,
+          aiCasesEvaluated: (cur.aiCasesEvaluated || 0) + 1,
+          aiCasesApproved: (cur.aiCasesApproved || 0) + (approved ? 1 : 0),
+        };
+        const nextMap = { ...prev, [activeCollaborator]: updatedPerson };
+        saveStorage('ct_trn_by_person_v2', nextMap);
+        return nextMap;
+      });
+    },
+    [activeCollaborator]
+  );
+
+  const handleOpenQuickSim = useCallback((deptKeyArg?: string, patientIdArg?: string) => {
+    setQuickSim({ open: true, deptKey: deptKeyArg || 'geral', patientId: patientIdArg });
   }, []);
 
-  const handleLaunchPractice = (deptKeyArg?: string) => {
+  const handleLaunchPractice = (deptKeyArg?: string, patientIdArg?: string) => {
+    if (patientIdArg) {
+      const target = patients.find((p) => p.id === patientIdArg);
+      if (target) {
+        setDeptFilter(target.dept);
+        setSelectedId(target.id);
+        setListTab(ATEND_TAB[target.atend]);
+        setView('simulacao');
+        return;
+      }
+    }
     if (deptKeyArg) {
       const match = TRAIN_DEPTS.find((d) => d.key === deptKeyArg);
       if (match) {
@@ -396,6 +676,135 @@ export default function App() {
     );
   };
 
+  const chatTargets = useMemo(
+    () =>
+      patients
+        .filter((p) => !p.isMed)
+        .map((p) => ({
+          id: p.id,
+          nome: p.nome,
+          proc: p.proc,
+          dept: p.dept,
+          medico: p.medico,
+          data: p.data,
+          hora: p.hora,
+        })),
+    [patients]
+  );
+
+  const handleSyncConsultationFromPatient = useCallback(
+    (
+      patientId: string,
+      patch: {
+        dateKey?: string;
+        dataBr?: string;
+        hora?: string;
+        medico?: string;
+        status?: string;
+      }
+    ) => {
+      setConsultations((prev) =>
+        prev.map((r) => (r.pid === patientId ? { ...r, ...patch } : r))
+      );
+    },
+    []
+  );
+
+  const handleForwardToChat = useCallback(
+    (patientId: string, text: string, label: string, openChat?: boolean) => {
+      const target = patients.find((p) => p.id === patientId);
+      setPatients((prev) =>
+        prev.map((p) =>
+          p.id !== patientId
+            ? p
+            : {
+                ...p,
+                opCount: p.opCount + 1,
+                msgs: [
+                  ...p.msgs,
+                  {
+                    id: `fwd_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                    from: 'op',
+                    label,
+                    text,
+                    t: nowTime(),
+                  },
+                ],
+              }
+        )
+      );
+      showToast(`${label} encaminhado no chat${target ? ` de ${target.first}` : ''}.`);
+      if (openChat) {
+        handleOpenPatientFromOutside(patientId);
+      }
+    },
+    [patients, showToast]
+  );
+
+  const handleUpdateConsultation = useCallback(
+    (
+      rowId: string,
+      patch: Partial<ConsultationRow>,
+      opts?: {
+        evtText?: string;
+        markPractice?: string;
+        chatMessage?: { patientId: string; text: string; label: string };
+      }
+    ) => {
+      const targetRow = consultations.find((r) => r.id === rowId);
+      setConsultations((prev) =>
+        prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r))
+      );
+
+      const linkedPid = targetRow?.pid;
+      const chatMsg = opts?.chatMessage;
+
+      if (linkedPid || chatMsg) {
+        setPatients((prev) =>
+          prev.map((p) => {
+            const isLinked = Boolean(linkedPid && p.id === linkedPid);
+            const isChatTarget = Boolean(chatMsg && p.id === chatMsg.patientId);
+            if (!isLinked && !isChatTarget) return p;
+
+            const extraMsgs = [...p.msgs];
+            if (isLinked && opts?.evtText) {
+              extraMsgs.push({
+                id: `cevt_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                from: 'evt',
+                text: opts.evtText,
+                t: nowTime(),
+              });
+            }
+            if (isChatTarget && chatMsg) {
+              extraMsgs.push({
+                id: `cmsg_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                from: 'op',
+                label: chatMsg.label,
+                text: chatMsg.text,
+                t: nowTime(),
+              });
+            }
+
+            return {
+              ...p,
+              data: isLinked && patch.dataBr ? patch.dataBr.replaceAll('/', '-') : p.data,
+              hora: isLinked && patch.hora ? patch.hora : p.hora,
+              medico: isLinked && patch.medico ? patch.medico : p.medico,
+              status: isLinked && patch.status ? patch.status : p.status,
+              opCount: isChatTarget ? p.opCount + 1 : p.opCount,
+              msgs: extraMsgs,
+            };
+          })
+        );
+      }
+
+      if (opts?.markPractice) {
+        handleSignalPractice(opts.markPractice);
+      }
+    },
+    [consultations, handleSignalPractice]
+  );
+
   return (
     <div className="min-h-screen flex flex-col md:grid md:grid-cols-[248px_minmax(0,1fr)]">
       <Sidebar
@@ -418,156 +827,247 @@ export default function App() {
         }}
         darkMode={darkMode}
         onToggleTheme={() => setDarkMode((d) => !d)}
-        traineeName={traineeName}
-        onChangeTraineeName={(name) => {
-          setTraineeName(name);
-          saveStorage('ct_trainee_name_v1', name);
-        }}
+        traineeName={activeCollaborator}
+        collaborators={collaborators}
+        onChangeTraineeName={handleChangeCollaborator}
+        googleUser={googleUser}
+        googleAuthLoading={googleAuthLoading}
+        onGoogleSignIn={handleGoogleSignIn}
+        onGoogleSignOut={handleGoogleSignOut}
       />
 
-      <main className="min-w-0 p-4 md:p-6 lg:p-7 overflow-x-hidden">
-        {view === 'trainee' && (
-          <TraineeView
-            progress={traineeProgress}
-            onUpdateProgress={handleUpdateTraineeProgress}
-            isAdmin={isAdmin}
-            traineeName={traineeName}
-            onLaunchPractice={handleLaunchPractice}
-            onGoView={handleSelectView}
-            onToast={showToast}
-          />
-        )}
+      <div className="min-w-0 flex flex-col">
+        <TopEnterpriseBar
+          activeCollaborator={activeCollaborator}
+          collaborators={collaborators}
+          onChangeCollaborator={handleChangeCollaborator}
+          onAddCollaborator={handleAddCollaborator}
+          summary={traineeSummary}
+          onOpenQuickSim={() => handleOpenQuickSim()}
+          onGoView={handleSelectView}
+          googleUser={googleUser}
+          googleAuthLoading={googleAuthLoading}
+          onGoogleSignIn={handleGoogleSignIn}
+          onGoogleSignOut={handleGoogleSignOut}
+        />
 
-        {view === 'simulacao' && (
-          <SimulatorView
-            cfg={cfg}
-            patients={patients}
-            setPatients={setPatients}
-            selectedId={selectedId}
-            setSelectedId={setSelectedId}
-            deptFilter={deptFilter}
-            setDeptFilter={setDeptFilter}
-            listTab={listTab}
-            setListTab={setListTab}
-            aiConfigured={aiConfigured}
-            onResetSim={handleResetSim}
-            onGoView={handleSelectView}
-            onOpenSolModal={(pid, mode) => handleOpenSolModal(pid, mode)}
-            onSignalPractice={handleSignalPractice}
-            onCoachSignal={handleCoachSignal}
-            onToast={showToast}
-          />
-        )}
+        <main className="min-w-0 flex-1 p-4 md:p-6 lg:p-7 overflow-x-hidden">
+          {view === 'trainee' && (
+            <TraineeView
+              cfg={cfg}
+              progress={activeProgress}
+              allProgressByPerson={traineeByPerson}
+              collaborators={collaborators}
+              trilhaData={trilhaData}
+              activeCollaborator={activeCollaborator}
+              googleLinked={Boolean(googleUser)}
+              onChangeCollaborator={handleChangeCollaborator}
+              onAddCollaborator={handleAddCollaborator}
+              onUpdateProgress={handleUpdateTraineeProgress}
+              isAdmin={isAdmin}
+              onLaunchPractice={handleLaunchPractice}
+              onOpenQuickSim={handleOpenQuickSim}
+              onGoView={handleSelectView}
+              onToast={showToast}
+            />
+          )}
 
-        {view === 'subsetores' && (
-          <SubsectorsView cfg={cfg} onStartTour={handleStartTour} />
-        )}
+          {view === 'reciclagem' && (
+            <ReciclagemView
+              cfg={cfg}
+              collaborators={collaborators}
+              activeCollaborator={activeCollaborator}
+              onChangeCollaborator={handleChangeCollaborator}
+              reciclagemByPerson={reciclagemByPerson}
+              onUpdateReciclagem={(person, next) => {
+                setReciclagemByPerson((prev) => {
+                  const updated = { ...prev, [person]: next };
+                  saveStorage('ct_reciclagem_v1', updated);
+                  return updated;
+                });
+              }}
+              isAdmin={isAdmin}
+              onOpenQuickSim={handleOpenQuickSim}
+              onGoView={handleSelectView}
+              onToast={showToast}
+            />
+          )}
 
-        {view === 'solicitacoes' && (
-          <SolicitationsView
-            patients={patients}
-            onOpenModal={handleOpenSolModal}
-            onMoveStatus={handleMoveSolStatus}
-            onOpenChat={handleOpenPatientFromOutside}
-          />
-        )}
+          {view === 'simulacao' && (
+            <SimulatorView
+              cfg={cfg}
+              patients={patients}
+              setPatients={setPatients}
+              selectedId={selectedId}
+              setSelectedId={setSelectedId}
+              deptFilter={deptFilter}
+              setDeptFilter={setDeptFilter}
+              listTab={listTab}
+              setListTab={setListTab}
+              aiConfigured={aiConfigured}
+              onResetSim={handleResetSim}
+              onGoView={handleSelectView}
+              onOpenSolModal={(pid, mode) => handleOpenSolModal(pid, mode)}
+              onSignalPractice={handleSignalPractice}
+              onSyncConsultation={handleSyncConsultationFromPatient}
+              onCaseEvaluated={handleCaseEvaluated}
+              onCoachSignal={handleCoachSignal}
+              onToast={showToast}
+            />
+          )}
 
-        {view === 'consultas' && (
-          <ConsultationsView
-            rows={consultations}
-            onStartConfirmTour={() => handleStartTour('confirmacao')}
-            onAccessChat={(pid) => {
-              handleOpenPatientFromOutside(pid);
-              showToast('Chat de confirmação aberto.');
-            }}
-            onGoView={handleSelectView}
-            onToast={showToast}
-          />
-        )}
+          {view === 'subsetores' && (
+            <SubsectorsView
+              cfg={cfg}
+              aiConfigured={aiConfigured}
+              speakerName={activeCollaborator}
+              voiceProfile={voiceProfile}
+              onUpdateVoiceProfile={handleUpdateVoiceProfile}
+              onStartTour={handleStartTour}
+              onOpenQuickSim={handleOpenQuickSim}
+              onToast={showToast}
+            />
+          )}
 
-        {view === 'crm' && (
-          <CrmView
-            patients={patients}
-            onOpenPatientChat={handleOpenPatientFromOutside}
-            onBackToSim={() => setView('simulacao')}
-          />
-        )}
+          {view === 'solicitacoes' && (
+            <SolicitationsView
+              patients={patients}
+              onOpenModal={handleOpenSolModal}
+              onMoveStatus={handleMoveSolStatus}
+              onOpenChat={handleOpenPatientFromOutside}
+              onOpenQuickSim={handleOpenQuickSim}
+            />
+          )}
 
-        {view === 'trilha' && (
-          <IntegrationTrackView
-            cfg={cfg}
-            trilhaData={trilhaData}
-            onUpdateTrilha={(person, next) => {
-              const updated = { ...trilhaData, [person]: next };
-              setTrilhaData(updated);
-              saveStorage('ct_trilha_v1', updated);
-            }}
-            isAdmin={isAdmin}
-            traineeName={traineeName}
-            onToast={showToast}
-          />
-        )}
+          {view === 'consultas' && (
+            <ConsultationsView
+              rows={consultations}
+              chatTargets={chatTargets}
+              onUpdateRow={handleUpdateConsultation}
+              onForwardToChat={handleForwardToChat}
+              onStartConfirmTour={() => handleStartTour('confirmacao')}
+              onAccessChat={(pid) => {
+                handleOpenPatientFromOutside(pid);
+                showToast('Chat de confirmação aberto.');
+              }}
+              onGoView={handleSelectView}
+              onOpenQuickSim={handleOpenQuickSim}
+              onToast={showToast}
+            />
+          )}
 
-        {view === 'treinamento' && (
-          <ScheduleView
-            cfg={cfg}
-            onUpdateConfig={handleUpdateConfig}
-            records={cronoRecords}
-            onSaveRecord={(person, rec) => {
-              const updated = { ...cronoRecords, [person]: rec };
-              setCronoRecords(updated);
-              saveStorage('ct_crono_v1', updated);
-            }}
-            isAdmin={isAdmin}
-            traineeName={traineeName}
-            onToast={showToast}
-          />
-        )}
+          {view === 'crm' && (
+            <CrmView
+              patients={patients}
+              onOpenPatientChat={handleOpenPatientFromOutside}
+              onOpenNegotiation={(pid) => setCrmNegPatientId(pid)}
+              onBackToSim={() => setView('simulacao')}
+              onOpenQuickSim={handleOpenQuickSim}
+              onToast={showToast}
+            />
+          )}
 
-        {view === 'apadrinhamento' && (
-          <MentorshipView
-            cfg={cfg}
-            isAdmin={isAdmin}
-            traineeName={traineeName}
-            commentsByPerson={mentorshipComments}
-            onAddComment={(key, comment) => {
-              const updated = {
-                ...mentorshipComments,
-                [key]: [comment, ...(mentorshipComments[key] || [])],
-              };
-              setMentorshipComments(updated);
-              saveStorage('ct_apad_v1', updated);
-            }}
-            onDeleteComment={(key, cid) => {
-              const updated = {
-                ...mentorshipComments,
-                [key]: (mentorshipComments[key] || []).filter((c) => c.id !== cid),
-              };
-              setMentorshipComments(updated);
-              saveStorage('ct_apad_v1', updated);
-              showToast('Comentário removido.');
-            }}
-            chatsByPerson={mentorshipChats}
-            onSendChatMsg={(key, msg) => {
-              const updated = {
-                ...mentorshipChats,
-                [key]: [...(mentorshipChats[key] || []), msg],
-              };
-              setMentorshipChats(updated);
-              saveStorage('ct_mchat_v1', updated);
-            }}
-            onToast={showToast}
-          />
-        )}
+          {view === 'trilha' && (
+            <IntegrationTrackView
+              cfg={cfg}
+              trilhaData={trilhaData}
+              onUpdateTrilha={(person, next) => {
+                const updated = { ...trilhaData, [person]: next };
+                setTrilhaData(updated);
+                saveStorage('ct_trilha_v1', updated);
+              }}
+              isAdmin={isAdmin}
+              traineeName={activeCollaborator}
+              onOpenQuickSim={handleOpenQuickSim}
+              onToast={showToast}
+            />
+          )}
 
-        {view === 'administracao' && isAdmin && (
-          <AdminView
-            cfg={cfg}
-            onSaveConfig={handleUpdateConfig}
-            onToast={showToast}
-          />
-        )}
-      </main>
+          {view === 'treinamento' && (
+            <ScheduleView
+              cfg={cfg}
+              onUpdateConfig={handleUpdateConfig}
+              records={cronoRecords}
+              onSaveRecord={(person, rec) => {
+                const updated = { ...cronoRecords, [person]: rec };
+                setCronoRecords(updated);
+                saveStorage('ct_crono_v1', updated);
+              }}
+              isAdmin={isAdmin}
+              traineeName={activeCollaborator}
+              onOpenQuickSim={handleOpenQuickSim}
+              onToast={showToast}
+            />
+          )}
+
+          {view === 'apadrinhamento' && (
+            <MentorshipView
+              cfg={cfg}
+              isAdmin={isAdmin}
+              traineeName={activeCollaborator}
+              commentsByPerson={mentorshipComments}
+              onAddComment={(key, comment) => {
+                const updated = {
+                  ...mentorshipComments,
+                  [key]: [comment, ...(mentorshipComments[key] || [])],
+                };
+                setMentorshipComments(updated);
+                saveStorage('ct_apad_v1', updated);
+              }}
+              onDeleteComment={(key, cid) => {
+                const updated = {
+                  ...mentorshipComments,
+                  [key]: (mentorshipComments[key] || []).filter((c) => c.id !== cid),
+                };
+                setMentorshipComments(updated);
+                saveStorage('ct_apad_v1', updated);
+                showToast('Comentário removido.');
+              }}
+              chatsByPerson={mentorshipChats}
+              onSendChatMsg={(key, msg) => {
+                const updated = {
+                  ...mentorshipChats,
+                  [key]: [...(mentorshipChats[key] || []), msg],
+                };
+                setMentorshipChats(updated);
+                saveStorage('ct_mchat_v1', updated);
+              }}
+              onOpenQuickSim={handleOpenQuickSim}
+              onToast={showToast}
+            />
+          )}
+
+          {view === 'administracao' && isAdmin && (
+            <AdminView
+              cfg={cfg}
+              onSaveConfig={handleUpdateConfig}
+              onToast={showToast}
+              aiConfigured={aiConfigured}
+              speakerName={activeCollaborator}
+              voiceProfile={voiceProfile}
+              onUpdateVoiceProfile={handleUpdateVoiceProfile}
+            />
+          )}
+        </main>
+      </div>
+
+      <QuickSimulatorDrawer
+        open={quickSim.open}
+        onClose={() => setQuickSim({ open: false })}
+        initialDeptKey={quickSim.deptKey}
+        initialPatientId={quickSim.patientId}
+        cfg={cfg}
+        patients={patients}
+        setPatients={setPatients}
+        aiConfigured={aiConfigured}
+        activeCollaborator={activeCollaborator}
+        summary={traineeSummary}
+        onOpenFullSimulator={(dKey, pid) => handleLaunchPractice(dKey, pid)}
+        onSignalPractice={handleSignalPractice}
+        onSyncConsultation={handleSyncConsultationFromPatient}
+        onCaseEvaluated={handleCaseEvaluated}
+        onToast={showToast}
+      />
 
       {solDrawerForm && (
         <SolicitationDrawer
@@ -579,6 +1079,151 @@ export default function App() {
         />
       )}
 
+      {crmNegPatientId && (() => {
+        const crmPatient = patients.find((p) => p.id === crmNegPatientId);
+        if (!crmPatient) return null;
+        return (
+          <NegotiationModal
+            patient={crmPatient}
+            onClose={() => setCrmNegPatientId(null)}
+            onToast={showToast}
+            onReschedule={(payload) => {
+              const dataDash = payload.dataBr.replaceAll('/', '-');
+              setPatients((prev) =>
+                prev.map((p) =>
+                  p.id !== crmPatient.id
+                    ? p
+                    : {
+                        ...p,
+                        data: dataDash,
+                        hora: payload.hora,
+                        medico: payload.medico,
+                        status: 'Reagendada',
+                        msgs: [
+                          ...p.msgs,
+                          {
+                            id: `crm_reag_${Date.now()}`,
+                            from: 'evt',
+                            text: `Reagendamento: ${payload.dataBr} às ${payload.hora} · ${payload.medico}`,
+                            t: nowTime(),
+                          },
+                          ...(payload.sendToChat
+                            ? [
+                                {
+                                  id: `crm_reag_op_${Date.now()}`,
+                                  from: 'op' as const,
+                                  label: 'Reagendamento confirmado',
+                                  text: `Sua consulta foi reagendada para ${payload.dataBr} às ${payload.hora} com ${payload.medico}. Qualquer dúvida estamos à disposição!`,
+                                  t: nowTime(),
+                                },
+                              ]
+                            : []),
+                        ],
+                      }
+                )
+              );
+              handleSyncConsultationFromPatient(crmPatient.id, {
+                dateKey: payload.dateKey,
+                dataBr: payload.dataBr,
+                hora: payload.hora,
+                medico: payload.medico,
+                status: 'Reagendada',
+              });
+              handleSignalPractice('d1_2');
+              showToast(`Consulta de ${crmPatient.nome} reagendada para ${payload.dataBr} às ${payload.hora}.`);
+            }}
+            onChangeDoctor={(medico, sendToChat) => {
+              setPatients((prev) =>
+                prev.map((p) =>
+                  p.id !== crmPatient.id
+                    ? p
+                    : {
+                        ...p,
+                        medico,
+                        msgs: [
+                          ...p.msgs,
+                          {
+                            id: `crm_doc_${Date.now()}`,
+                            from: 'evt',
+                            text: `Médico alterado para ${medico}`,
+                            t: nowTime(),
+                          },
+                          ...(sendToChat
+                            ? [
+                                {
+                                  id: `crm_doc_op_${Date.now()}`,
+                                  from: 'op' as const,
+                                  label: 'Alteração de médico',
+                                  text: `Informamos que sua consulta foi atualizada para atendimento com ${medico}, mantendo o dia ${p.data.replaceAll('-', '/')} às ${p.hora}.`,
+                                  t: nowTime(),
+                                },
+                              ]
+                            : []),
+                        ],
+                      }
+                )
+              );
+              handleSyncConsultationFromPatient(crmPatient.id, { medico });
+              showToast(`Médico atualizado para ${medico}.`);
+            }}
+            onChangeStatus={(nextStatus, sendToChat) => {
+              setPatients((prev) =>
+                prev.map((p) =>
+                  p.id !== crmPatient.id
+                    ? p
+                    : {
+                        ...p,
+                        status: nextStatus,
+                        msgs: [
+                          ...p.msgs,
+                          {
+                            id: `crm_st_${Date.now()}`,
+                            from: 'evt',
+                            text: `Status da consulta alterado para "${nextStatus}"`,
+                            t: nowTime(),
+                          },
+                          ...(sendToChat && nextStatus === 'Confirmada'
+                            ? [
+                                {
+                                  id: `crm_st_op_${Date.now()}`,
+                                  from: 'op' as const,
+                                  label: 'Agendamento confirmado',
+                                  text: `Sua consulta de ${p.data.replaceAll('-', '/')} às ${p.hora} com ${p.medico} está confirmada!`,
+                                  t: nowTime(),
+                                },
+                              ]
+                            : []),
+                        ],
+                      }
+                )
+              );
+              handleSyncConsultationFromPatient(crmPatient.id, { status: nextStatus });
+              showToast(`Status atualizado para ${nextStatus}.`);
+            }}
+            onAddNote={(text, tipo = 'Nota') => {
+              setPatients((prev) =>
+                prev.map((p) =>
+                  p.id !== crmPatient.id
+                    ? p
+                    : {
+                        ...p,
+                        notas: [
+                          ...p.notas,
+                          { id: `crm_n_${Date.now()}`, tipo, text, t: nowTime() },
+                        ],
+                      }
+                )
+              );
+              showToast('Nota adicionada ao paciente.');
+            }}
+            onForwardToChat={(text, label) => {
+              handleForwardToChat(crmPatient.id, text, label, false);
+              setCrmNegPatientId(null);
+            }}
+          />
+        );
+      })()}
+
       <CoachOverlay
         active={coachState.active}
         steps={coachState.steps}
@@ -589,6 +1234,14 @@ export default function App() {
           if (msg) showToast(msg);
         }}
         cfg={cfg}
+      />
+
+      <GoogleAccessModal
+        open={googleModalOpen && !googleUser}
+        loading={googleAuthLoading}
+        error={googleAuthError}
+        onGoogleSignIn={handleGoogleSignIn}
+        onContinueWithoutLogin={handleDismissGoogleModal}
       />
 
       {toastMsg && (
