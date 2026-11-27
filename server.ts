@@ -56,29 +56,88 @@ async function startServer() {
     res.json({ configured: Boolean(ai) });
   });
 
-  app.get('/api/auth/firebase-config', (_req: Request, res: Response) => {
-    const envApiKey = (process.env.FIREBASE_API_KEY || '').trim();
-    if (envApiKey && envApiKey !== 'MY_FIREBASE_API_KEY') {
-      res.json({
-        configured: true,
-        config: {
-          apiKey: envApiKey,
-          authDomain:
-            (process.env.FIREBASE_AUTH_DOMAIN || '').trim() ||
-            'gen-lang-client-0095658311.firebaseapp.com',
-          projectId:
-            (process.env.FIREBASE_PROJECT_ID || '').trim() || 'gen-lang-client-0095658311',
-          storageBucket:
-            (process.env.FIREBASE_STORAGE_BUCKET || '').trim() ||
-            'gen-lang-client-0095658311.firebasestorage.app',
-          messagingSenderId:
-            (process.env.FIREBASE_MESSAGING_SENDER_ID || '').trim() || '54395473467',
-          appId:
-            (process.env.FIREBASE_APP_ID || '').trim() ||
-            '1:54395473467:web:7898264b116f0a7624561e',
-        },
-      });
-      return;
+  const cleanEnvVal = (raw: string | undefined): string =>
+    (raw || '').trim().replace(/^["']+|["']+$/g, '').trim();
+
+  const DEFAULT_FIREBASE_CONFIG = {
+    authDomain: 'gen-lang-client-0095658311.firebaseapp.com',
+    projectId: 'gen-lang-client-0095658311',
+    storageBucket: 'gen-lang-client-0095658311.firebasestorage.app',
+    messagingSenderId: '54395473467',
+    appId: '1:54395473467:web:7898264b116f0a7624561e',
+  };
+
+  const readFirebaseEnvConfig = () => {
+    const rawApiKey = cleanEnvVal(process.env.FIREBASE_API_KEY);
+    if (!rawApiKey || rawApiKey === 'MY_FIREBASE_API_KEY') {
+      return {
+        config: null,
+        issueCode: 'MISSING_API_KEY' as const,
+        issueMessage:
+          'Configure a chave FIREBASE_API_KEY (começando com AIza...) em Settings > Secrets para ativar o Login com Google.',
+      };
+    }
+
+    if (!/^AIza[0-9A-Za-z_-]{20,}$/.test(rawApiKey)) {
+      return {
+        config: null,
+        issueCode: 'INVALID_API_KEY_FORMAT' as const,
+        issueMessage:
+          'O valor salvo em FIREBASE_API_KEY em Settings > Secrets não é uma chave de API do Google válida (deve começar com "AIza..."). Corrija a chave em Settings > Secrets.',
+      };
+    }
+
+    const rawDomain = cleanEnvVal(process.env.FIREBASE_AUTH_DOMAIN)
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '');
+    const authDomain = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(rawDomain)
+      ? rawDomain
+      : DEFAULT_FIREBASE_CONFIG.authDomain;
+
+    const rawProjectId = cleanEnvVal(process.env.FIREBASE_PROJECT_ID);
+    const projectId = /^[a-z0-9-]{4,}$/.test(rawProjectId)
+      ? rawProjectId
+      : DEFAULT_FIREBASE_CONFIG.projectId;
+
+    const rawStorageBucket = cleanEnvVal(process.env.FIREBASE_STORAGE_BUCKET);
+    const storageBucket = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(rawStorageBucket)
+      ? rawStorageBucket
+      : DEFAULT_FIREBASE_CONFIG.storageBucket;
+
+    const rawSenderId = cleanEnvVal(process.env.FIREBASE_MESSAGING_SENDER_ID);
+    const messagingSenderId = /^\d{6,}$/.test(rawSenderId)
+      ? rawSenderId
+      : DEFAULT_FIREBASE_CONFIG.messagingSenderId;
+
+    const rawAppId = cleanEnvVal(process.env.FIREBASE_APP_ID);
+    const appId = /^1:\d+:web:[a-f0-9]+$/i.test(rawAppId)
+      ? rawAppId
+      : DEFAULT_FIREBASE_CONFIG.appId;
+
+    return {
+      config: {
+        apiKey: rawApiKey,
+        authDomain,
+        projectId,
+        storageBucket,
+        messagingSenderId,
+        appId,
+      },
+      issueCode: null,
+      issueMessage: null,
+    };
+  };
+
+  const resolveActiveFirebaseConfig = () => {
+    const envResult = readFirebaseEnvConfig();
+    if (envResult.config) {
+      return {
+        configured: true as const,
+        source: 'env' as const,
+        config: envResult.config,
+        issueCode: null,
+        issueMessage: null,
+      };
     }
 
     const localCfgPath = path.resolve(__dirname, 'firebase-applet-config.json');
@@ -92,16 +151,111 @@ async function startServer() {
           messagingSenderId?: string;
           appId?: string;
         };
-        if (parsed.apiKey) {
-          res.json({ configured: true, config: parsed });
-          return;
+        if (parsed.apiKey && /^AIza[0-9A-Za-z_-]{20,}$/.test(parsed.apiKey)) {
+          return {
+            configured: true as const,
+            source: 'local-config' as const,
+            config: {
+              apiKey: parsed.apiKey,
+              authDomain: parsed.authDomain || DEFAULT_FIREBASE_CONFIG.authDomain,
+              projectId: parsed.projectId || DEFAULT_FIREBASE_CONFIG.projectId,
+              storageBucket: parsed.storageBucket || DEFAULT_FIREBASE_CONFIG.storageBucket,
+              messagingSenderId:
+                parsed.messagingSenderId || DEFAULT_FIREBASE_CONFIG.messagingSenderId,
+              appId: parsed.appId || DEFAULT_FIREBASE_CONFIG.appId,
+            },
+            issueCode: null,
+            issueMessage: null,
+          };
         }
       } catch {
         // fall through to unconfigured response
       }
     }
 
-    res.json({ configured: false, config: null });
+    return {
+      configured: false as const,
+      source: 'none' as const,
+      config: null,
+      issueCode: envResult.issueCode,
+      issueMessage: envResult.issueMessage,
+    };
+  };
+
+  app.get('/api/auth/firebase-config', (_req: Request, res: Response) => {
+    const resolved = resolveActiveFirebaseConfig();
+    res.json({
+      configured: resolved.configured,
+      config: resolved.config,
+      ...(resolved.issueCode ? { issueCode: resolved.issueCode, issueMessage: resolved.issueMessage } : {}),
+    });
+  });
+
+  app.get('/api/auth/diagnose', async (req: Request, res: Response) => {
+    const resolved = resolveActiveFirebaseConfig();
+    const cfg = resolved.config;
+    if (!cfg) {
+      res.json({
+        configured: false,
+        ok: false,
+        reason: resolved.issueCode,
+        message: resolved.issueMessage,
+      });
+      return;
+    }
+
+    const checks = {
+      source: resolved.source,
+      apiKeyStartsWithAIza: /^AIza[0-9A-Za-z_-]{20,}$/.test(cfg.apiKey),
+      apiKeyHasSpaces: /\s/.test(cfg.apiKey),
+      authDomainValid: /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(cfg.authDomain),
+      projectIdValid: /^[a-z0-9-]+$/.test(cfg.projectId),
+      appIdValid: /^1:\d+:web:[a-f0-9]+$/i.test(cfg.appId),
+    };
+
+    const originHeader =
+      (typeof req.headers.origin === 'string' && req.headers.origin) ||
+      (typeof req.headers.referer === 'string' && req.headers.referer) ||
+      `https://${cfg.authDomain}/`;
+
+    let identityStatus = 0;
+    let identityReason = '';
+    let authorizedDomains: string[] = [];
+    try {
+      const resp = await fetch(
+        `https://www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig?key=${encodeURIComponent(cfg.apiKey)}`,
+        {
+          headers: {
+            Referer: originHeader,
+          },
+        }
+      );
+      identityStatus = resp.status;
+      const body = (await resp.json().catch(() => ({}))) as {
+        authorizedDomains?: string[];
+        error?: { message?: string; errors?: Array<{ reason?: string; message?: string }> };
+      };
+      if (resp.ok) {
+        authorizedDomains = Array.isArray(body.authorizedDomains) ? body.authorizedDomains : [];
+      } else {
+        identityReason =
+          body.error?.errors?.[0]?.reason || body.error?.message || `HTTP_${resp.status}`;
+      }
+    } catch (err) {
+      identityReason = err instanceof Error ? err.message : 'FETCH_ERROR';
+    }
+
+    res.json({
+      configured: true,
+      ok: identityStatus === 200 && checks.apiKeyStartsWithAIza && checks.authDomainValid && checks.appIdValid,
+      checks,
+      identityStatus,
+      identityReason,
+      authorizedDomainsCount: authorizedDomains.length,
+      currentHostAuthorized: authorizedDomains.some((d) =>
+        originHeader.includes(d)
+      ),
+    });
   });
 
   app.get('/api/shared/content', (_req: Request, res: Response) => {

@@ -402,17 +402,33 @@ export default function App() {
       showToast(`Acesso Google conectado: ${profile.displayName} (${matched})`);
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
+      const rawMsg = (err as { message?: string })?.message || '';
+      const isReferrerBlocked =
+        rawMsg.includes('requests-from-referer') ||
+        rawMsg.includes('API_KEY_HTTP_REFERRER_BLOCKED');
       const message =
         code === 'auth/not-configured'
-          ? 'Configure a nova chave FIREBASE_API_KEY em Settings > Secrets para reativar o acesso com o Google.'
-          : code === 'auth/popup-blocked'
-            ? 'Pop-up bloqueado pelo navegador. Permita pop-ups para acessar com o Google.'
-            : code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
-              ? 'Login com Google cancelado antes da conclusão.'
-              : code === 'auth/unauthorized-domain'
-                ? 'Domínio não autorizado nas configurações de autenticação do Google.'
-                : 'Não foi possível concluir o acesso com o Google. Tente novamente.';
+          ? rawMsg ||
+            'Configure a chave FIREBASE_API_KEY em Settings > Secrets para ativar o acesso com o Google.'
+          : code === 'auth/invalid-api-key' ||
+              code === 'auth/api-key-not-valid.-please-pass-a-valid-api-key.' ||
+              rawMsg.includes('API_KEY_INVALID')
+            ? 'A chave FIREBASE_API_KEY em Settings > Secrets está inválida ou revogada. Atualize com uma chave Web API Key válida (começando com AIza...) ou clique em "Continuar sem conta Google" abaixo.'
+            : isReferrerBlocked
+              ? 'A chave do Google Cloud bloqueou este endereço (restrição de referenciador HTTP). Adicione *.run.app/* e *.firebaseapp.com/* nas restrições da chave.'
+              : code === 'auth/popup-blocked'
+                ? 'Pop-up bloqueado pelo navegador. Permita pop-ups para acessar com o Google.'
+                : code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
+                  ? 'Login com Google cancelado antes da conclusão.'
+                  : code === 'auth/unauthorized-domain'
+                    ? `Domínio (${window.location.hostname}) não autorizado no Firebase Authentication.`
+                    : code === 'auth/operation-not-allowed'
+                      ? 'Provedor Google não habilitado no Firebase Authentication.'
+                      : code === 'auth/network-request-failed'
+                        ? 'Falha de conexão com o servidor de autenticação Google. Tente novamente.'
+                        : `Não foi possível concluir o acesso com o Google${code ? ` (${code})` : ''}. Você pode continuar normalmente clicando no botão abaixo.`;
       setGoogleAuthError(message);
+      setGoogleModalOpen(true);
       showToast(message);
     } finally {
       setGoogleAuthLoading(false);

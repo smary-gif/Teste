@@ -39,29 +39,52 @@ provider.setCustomParameters({ prompt: 'select_account' });
 // In-memory access token cache (never persisted in localStorage/sessionStorage)
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
-let authPromise: Promise<Auth | null> | null = null;
+let cachedAuth: Auth | null = null;
 
-async function ensureAuth(): Promise<Auth | null> {
-  if (!authPromise) {
-    authPromise = (async () => {
-      try {
-        const resp = await fetch('/api/auth/firebase-config');
-        if (!resp.ok) return null;
-        const data = (await resp.json()) as {
-          configured?: boolean;
-          config?: FirebaseWebConfig | null;
-        };
-        if (!data.configured || !data.config?.apiKey) {
-          return null;
-        }
-        const app = getApps().length > 0 ? getApps()[0] : initializeApp(data.config);
-        return getAuth(app);
-      } catch {
-        return null;
-      }
-    })();
+interface EnsureAuthResult {
+  auth: Auth | null;
+  issueCode?: string | null;
+  issueMessage?: string | null;
+}
+
+async function ensureAuth(): Promise<EnsureAuthResult> {
+  if (cachedAuth) {
+    return { auth: cachedAuth };
   }
-  return authPromise;
+  try {
+    const resp = await fetch('/api/auth/firebase-config');
+    if (!resp.ok) {
+      return {
+        auth: null,
+        issueCode: 'CONFIG_FETCH_ERROR',
+        issueMessage: 'Não foi possível consultar a configuração de acesso no servidor.',
+      };
+    }
+    const data = (await resp.json()) as {
+      configured?: boolean;
+      config?: FirebaseWebConfig | null;
+      issueCode?: string | null;
+      issueMessage?: string | null;
+    };
+    if (!data.configured || !data.config?.apiKey) {
+      return {
+        auth: null,
+        issueCode: data.issueCode || 'MISSING_API_KEY',
+        issueMessage:
+          data.issueMessage ||
+          'Configure a chave FIREBASE_API_KEY em Settings > Secrets para ativar o Login com Google.',
+      };
+    }
+    const app = getApps().length > 0 ? getApps()[0] : initializeApp(data.config);
+    cachedAuth = getAuth(app);
+    return { auth: cachedAuth };
+  } catch {
+    return {
+      auth: null,
+      issueCode: 'CONFIG_FETCH_ERROR',
+      issueMessage: 'Erro de conexão ao verificar a autenticação Google.',
+    };
+  }
 }
 
 function toProfile(user: User): GoogleAuthProfile {
@@ -82,7 +105,7 @@ export function initGoogleAuth(
   let active = true;
   let innerUnsub: Unsubscribe | null = null;
 
-  void ensureAuth().then((auth) => {
+  void ensureAuth().then(({ auth }) => {
     if (!active || !auth) return;
     innerUnsub = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -104,10 +127,13 @@ export async function signInWithGoogle(): Promise<{
   profile: GoogleAuthProfile;
   accessToken: string | null;
 }> {
-  const auth = await ensureAuth();
+  const { auth, issueCode, issueMessage } = await ensureAuth();
   if (!auth) {
-    const err = new Error('Firebase Auth não configurado') as Error & { code?: string };
-    err.code = 'auth/not-configured';
+    const err = new Error(issueMessage || 'Firebase Auth não configurado') as Error & {
+      code?: string;
+    };
+    err.code =
+      issueCode === 'INVALID_API_KEY_FORMAT' ? 'auth/invalid-api-key' : 'auth/not-configured';
     throw err;
   }
   isSigningIn = true;
@@ -126,7 +152,7 @@ export async function signInWithGoogle(): Promise<{
 
 export async function signOutGoogle(): Promise<void> {
   cachedAccessToken = null;
-  const auth = await ensureAuth();
+  const { auth } = await ensureAuth();
   if (auth) {
     await signOut(auth);
   }
