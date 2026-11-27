@@ -104,8 +104,8 @@ export function GoogleAccessModal({
                 Acessar Central de Treinamentos
               </h2>
               <p className="text-xs text-[var(--muted)] mt-1 leading-relaxed">
-                Entre com sua Conta Google para vincular automaticamente o seu processo individual,
-                notas das provas, simulações e reciclagem.
+                Entre com sua conta Google da Click para puxar seu perfil automaticamente e
+                acessar simulações, treinamentos, notas das provas e reciclagem.
               </p>
             </div>
           </div>

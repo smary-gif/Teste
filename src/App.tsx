@@ -26,8 +26,11 @@ import {
   signOutGoogle,
   type GoogleAuthProfile,
 } from './lib/googleAuth';
+import { Award, Lock, RefreshCw } from 'lucide-react';
 import {
+  ADMIN_DIRECTORY,
   canonicalPersonKey,
+  computeReciclagemStatus,
   computeTraineeSummary,
   createInitialReciclagemByPerson,
   createInitialTraineeByPerson,
@@ -36,6 +39,8 @@ import {
   EMPTY_RECICLAGEM_PROGRESS,
   EMPTY_TRAINEE_PROGRESS,
   getCollaboratorList,
+  isAdminCollaboratorName,
+  resolveAdminFromGoogle,
   TRAIN_DEPTS,
   generateConsultations,
   generatePatients,
@@ -90,9 +95,13 @@ export default function App() {
     const saved = loadStorage<Partial<PortalConfig>>('ct_cfg_v1', {});
     const needsTrainerUpdate =
       !saved.madrinha?.nome || saved.madrinha.nome === 'Stephanye';
+    const savedOrdem = Array.isArray(saved.treinoOrdem)
+      ? saved.treinoOrdem.filter((n) => !isAdminCollaboratorName(n))
+      : null;
     return {
       ...DEFAULT_CONFIG,
       ...saved,
+      treinoOrdem: savedOrdem && savedOrdem.length ? savedOrdem : DEFAULT_CONFIG.treinoOrdem,
       lideranca: {
         ...DEFAULT_LEADERSHIP,
         ...(saved.lideranca || {}),
@@ -106,16 +115,18 @@ export default function App() {
   });
 
   const [customCollaborators, setCustomCollaborators] = useState<string[]>(() =>
-    loadStorage<string[]>('ct_custom_collabs_v1', [])
+    loadStorage<string[]>('ct_custom_collabs_v1', []).filter(
+      (n) => !isAdminCollaboratorName(n)
+    )
   );
 
   const collaborators = useMemo(() => {
     const base = getCollaboratorList(cfg);
     const seen = new Set(base.map((n) => canonicalPersonKey(n)));
     const merged = [...base];
-    ['Smary', ...customCollaborators].forEach((n) => {
+    customCollaborators.forEach((n) => {
       const clean = n.trim();
-      if (!clean) return;
+      if (!clean || isAdminCollaboratorName(clean)) return;
       const key = canonicalPersonKey(clean);
       if (!seen.has(key)) {
         seen.add(key);
@@ -129,11 +140,14 @@ export default function App() {
     loadStorage<boolean>('ct_theme_v1', false)
   );
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [activeAdminLabel, setActiveAdminLabel] = useState<string | null>(
+    ADMIN_DIRECTORY[0].label
+  );
 
   const [activeCollaborator, setActiveCollaborator] = useState<string>(() => {
     const saved = loadStorage<string>('ct_active_collab_v1', '');
-    if (saved) return saved;
-    return 'Smary';
+    if (saved && !isAdminCollaboratorName(saved)) return saved;
+    return getCollaboratorList(cfg)[0] || 'Rayssa';
   });
 
   const [view, setView] = useState<AppView>('trainee');
@@ -202,6 +216,9 @@ export default function App() {
   const [videoOverrides, setVideoOverrides] = useState<Record<string, EditableVideoScript>>({});
   const [sharedSceneAudios, setSharedSceneAudios] = useState<Record<string, string>>({});
   const [sharedVoiceProfile, setSharedVoiceProfile] = useState<AiVoiceProfile | null>(null);
+  const [opsAccessOverrides, setOpsAccessOverrides] = useState<
+    Record<string, 'unlocked' | 'locked'>
+  >(() => loadStorage<Record<string, 'unlocked' | 'locked'>>('ct_ops_locks_v1', {}));
 
   const handleUpdateVoiceProfile = useCallback((next: AiVoiceProfile | null) => {
     setVoiceProfile(next);
@@ -270,9 +287,14 @@ export default function App() {
       .then((r) => r.json())
       .then((data: SharedPortalContent) => {
         if (data.cfg) {
+          const remoteOrdem = Array.isArray(data.cfg.treinoOrdem)
+            ? data.cfg.treinoOrdem.filter((n) => !isAdminCollaboratorName(n))
+            : null;
           setCfg((prev) => ({
             ...prev,
             ...data.cfg,
+            treinoOrdem:
+              remoteOrdem && remoteOrdem.length ? remoteOrdem : prev.treinoOrdem,
             templates: { ...prev.templates, ...(data.cfg?.templates || {}) },
           }));
         }
@@ -289,6 +311,10 @@ export default function App() {
         if (data.sharedVoiceProfile !== undefined) {
           setSharedVoiceProfile(data.sharedVoiceProfile);
         }
+        if (data.opsAccessOverrides) {
+          setOpsAccessOverrides(data.opsAccessOverrides);
+          saveStorage('ct_ops_locks_v1', data.opsAccessOverrides);
+        }
       })
       .catch(() => undefined);
   }, []);
@@ -301,6 +327,57 @@ export default function App() {
     [activeProgress, trilhaData, activeCollaborator]
   );
 
+  const activeReciclagemStatus = useMemo(
+    () =>
+      computeReciclagemStatus(
+        reciclagemByPerson[activeCollaborator] || EMPTY_RECICLAGEM_PROGRESS(activeCollaborator)
+      ),
+    [reciclagemByPerson, activeCollaborator]
+  );
+
+  const activeTraineeUnlocked = useMemo(() => {
+    if (isAdmin) return true;
+    const key = canonicalPersonKey(activeCollaborator);
+    const manual = opsAccessOverrides[key];
+    if (manual === 'locked') return false;
+    if (manual === 'unlocked') return true;
+    return (
+      traineeSummary.trilhaPct >= 100 ||
+      activeReciclagemStatus.examPassed ||
+      activeReciclagemStatus.status === 'Aprovada' ||
+      traineeSummary.completedStages === 4
+    );
+  }, [
+    isAdmin,
+    activeCollaborator,
+    opsAccessOverrides,
+    traineeSummary.trilhaPct,
+    traineeSummary.completedStages,
+    activeReciclagemStatus.examPassed,
+    activeReciclagemStatus.status,
+  ]);
+
+  const handleToggleOpsAccess = useCallback(
+    (personName: string, nextUnlocked: boolean) => {
+      const key = canonicalPersonKey(personName);
+      setOpsAccessOverrides((prev) => {
+        const next: Record<string, 'unlocked' | 'locked'> = {
+          ...prev,
+          [key]: nextUnlocked ? 'unlocked' : 'locked',
+        };
+        saveStorage('ct_ops_locks_v1', next);
+        void persistSharedContent({ opsAccessOverrides: next });
+        return next;
+      });
+      showToast(
+        nextUnlocked
+          ? `Treinamento Trainee liberado para ${personName} pela Administração.`
+          : `Treinamento Trainee travado com cadeado para ${personName}.`
+      );
+    },
+    [persistSharedContent, showToast]
+  );
+
   const handleChangeCollaborator = useCallback(
     (name: string) => {
       setActiveCollaborator(name);
@@ -311,7 +388,7 @@ export default function App() {
         saveStorage('ct_trn_by_person_v2', next);
         return next;
       });
-      showToast(`Processo individual ativo: ${name}`);
+      showToast(`Colaboradora ativa: ${name}`);
     },
     [showToast]
   );
@@ -349,7 +426,7 @@ export default function App() {
         saveStorage('ct_reciclagem_v1', next);
         return next;
       });
-      showToast(`Processo individual vinculado a ${targetName}.`);
+      showToast(`Acesso vinculado a ${targetName}.`);
     },
     [collaborators, showToast]
   );
@@ -363,11 +440,16 @@ export default function App() {
         setGoogleUser(profile);
         setGoogleAuthError(null);
         setGoogleModalOpen(false);
-        const savedCollab = loadStorage<string>('ct_active_collab_v1', '');
-        if (!savedCollab) {
-          const matched = resolveCollaboratorFromGoogle(profile, collaboratorsRef.current);
-          handleAddCollaborator(matched);
+        const adminAccount = resolveAdminFromGoogle(profile);
+        if (adminAccount) {
+          setIsAdmin(true);
+          setActiveAdminLabel(adminAccount.label);
+          return;
         }
+        setIsAdmin(false);
+        setActiveAdminLabel(null);
+        const matched = resolveCollaboratorFromGoogle(profile, collaboratorsRef.current);
+        handleAddCollaborator(matched);
       },
       () => {
         setGoogleUser(null);
@@ -397,6 +479,15 @@ export default function App() {
       } catch {
         // ignore storage restrictions
       }
+      const adminAccount = resolveAdminFromGoogle(profile);
+      if (adminAccount) {
+        setIsAdmin(true);
+        setActiveAdminLabel(adminAccount.label);
+        showToast(`ADM conectada via Google: ${adminAccount.label}`);
+        return;
+      }
+      setIsAdmin(false);
+      setActiveAdminLabel(null);
       const matched = resolveCollaboratorFromGoogle(profile, collaboratorsRef.current);
       handleAddCollaborator(matched);
       showToast(`Acesso Google conectado: ${profile.displayName} (${matched})`);
@@ -439,6 +530,8 @@ export default function App() {
     try {
       await signOutGoogle();
       setGoogleUser(null);
+      setIsAdmin(false);
+      setActiveAdminLabel(ADMIN_DIRECTORY[0].label);
       showToast('Conta Google desconectada.');
     } catch {
       showToast('Erro ao desconectar a conta Google.');
@@ -969,18 +1062,27 @@ export default function App() {
         portalName={cfg.portalNome}
         portalSub={cfg.portalSub}
         isAdmin={isAdmin}
+        activeAdminLabel={activeAdminLabel}
+        onSelectAdminLabel={(label) => {
+          setActiveAdminLabel(label);
+          showToast(`ADM ativa: ${label}`);
+        }}
         onToggleRole={() => {
           setIsAdmin((prev) => {
             const next = !prev;
             if (!next && view === 'administracao') setView('trainee');
+            if (next && !activeAdminLabel) {
+              setActiveAdminLabel(ADMIN_DIRECTORY[0].label);
+            }
             showToast(
               next
-                ? 'Modo Instrutora / Coordenação ativado.'
+                ? `Modo ADM ativado (${activeAdminLabel || ADMIN_DIRECTORY[0].label}).`
                 : 'Modo Trainee ativado.'
             );
             return next;
           });
         }}
+        traineeUnlocked={activeTraineeUnlocked}
         darkMode={darkMode}
         onToggleTheme={() => setDarkMode((d) => !d)}
         traineeName={activeCollaborator}
@@ -1005,28 +1107,120 @@ export default function App() {
           googleAuthLoading={googleAuthLoading}
           onGoogleSignIn={handleGoogleSignIn}
           onGoogleSignOut={handleGoogleSignOut}
+          isAdmin={isAdmin}
+          activeAdminLabel={activeAdminLabel}
         />
 
         <main className="min-w-0 flex-1 p-4 md:p-6 lg:p-7 overflow-x-hidden">
-          {view === 'trainee' && (
-            <TraineeView
-              cfg={cfg}
-              progress={activeProgress}
-              allProgressByPerson={traineeByPerson}
-              collaborators={collaborators}
-              trilhaData={trilhaData}
-              activeCollaborator={activeCollaborator}
-              googleLinked={Boolean(googleUser)}
-              onChangeCollaborator={handleChangeCollaborator}
-              onAddCollaborator={handleAddCollaborator}
-              onUpdateProgress={handleUpdateTraineeProgress}
-              isAdmin={isAdmin}
-              onLaunchPractice={handleLaunchPractice}
-              onOpenQuickSim={handleOpenQuickSim}
-              onGoView={handleSelectView}
-              onToast={showToast}
-            />
-          )}
+          {view === 'trainee' &&
+            (!activeTraineeUnlocked ? (
+              <section className="max-w-[780px] mx-auto rounded-2xl border border-amber-500/40 bg-[var(--surface)] p-6 md:p-8 space-y-5 shadow-xs">
+                <div className="flex items-start gap-4">
+                  <div className="h-12 w-12 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-300 grid place-items-center shrink-0">
+                    <Lock className="h-6 w-6" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-300">
+                      Treinamento Trainee protegido com cadeado · {activeCollaborator}
+                    </span>
+                    <h1 className="text-xl md:text-2xl font-bold text-[var(--ink)]">
+                      Conclua o Treinamento ou a Reciclagem para desbloquear
+                    </h1>
+                    <p className="text-sm text-[var(--muted)] leading-relaxed">
+                      Apenas a área de <strong>Treinamento Trainee (provas e certificação)</strong> fica
+                      bloqueada com cadeado até concluir a <strong>Trilha de Integração (100%)</strong> ou
+                      ser aprovada na <strong>Reciclagem (85%+)</strong>, ou mediante liberação da ADM
+                      (Stephanye/Smary, Andréia, Iris ou Kat). As <strong>simulações e operações</strong>{' '}
+                      (Solicitações, Confirmação, Consultas e CRM) estão sempre liberadas!
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-[var(--accent)]">
+                        Trilha de Integração
+                      </span>
+                      <span className="font-mono-num text-xs font-bold text-[var(--ink)]">
+                        {traineeSummary.trilhaPct}%
+                      </span>
+                    </div>
+                    <p className="text-xs text-[var(--muted)]">
+                      Conclua todas as etapas da trilha para liberar o Treinamento Trainee.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setView('trilha')}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-3.5 py-2 text-xs font-semibold whitespace-nowrap"
+                    >
+                      <Award className="h-3.5 w-3.5" />
+                      Ir para Trilha de Integração
+                    </button>
+                  </div>
+
+                  <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-[var(--accent)]">
+                        Reciclagem (Veteranas)
+                      </span>
+                      <span className="font-mono-num text-xs font-bold text-[var(--ink)]">
+                        {activeReciclagemStatus.status}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[var(--muted)]">
+                      Checklist: {activeReciclagemStatus.checklistDone}/{activeReciclagemStatus.checklistTotal} · Prova mín. 85%
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setView('reciclagem')}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 text-[var(--accent)]" />
+                      Ir para Reciclagem
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--line)]">
+                  <button
+                    type="button"
+                    onClick={() => setView('simulacao')}
+                    className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)]"
+                  >
+                    Ir para Simulador de IA (Livre)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView('consultas')}
+                    className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3.5 py-2 text-xs font-semibold hover:border-[var(--accent)]"
+                  >
+                    Ir para Consultas (Livre)
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <TraineeView
+                cfg={cfg}
+                progress={activeProgress}
+                allProgressByPerson={traineeByPerson}
+                collaborators={collaborators}
+                trilhaData={trilhaData}
+                reciclagemByPerson={reciclagemByPerson}
+                opsAccessOverrides={opsAccessOverrides}
+                onToggleOpsAccess={handleToggleOpsAccess}
+                activeCollaborator={activeCollaborator}
+                googleLinked={Boolean(googleUser)}
+                onChangeCollaborator={handleChangeCollaborator}
+                onAddCollaborator={handleAddCollaborator}
+                onUpdateProgress={handleUpdateTraineeProgress}
+                isAdmin={isAdmin}
+                onLaunchPractice={handleLaunchPractice}
+                onOpenQuickSim={handleOpenQuickSim}
+                onGoView={handleSelectView}
+                onToast={showToast}
+              />
+            ))}
 
           {view === 'reciclagem' && (
             <ReciclagemView

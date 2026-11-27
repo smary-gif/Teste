@@ -8,12 +8,15 @@ import {
   Heart,
   LayoutList,
   ListChecks,
+  Lock,
   LogOut,
   Moon,
   RefreshCw,
   Settings,
+  ShieldCheck,
   Sun,
 } from 'lucide-react';
+import { ADMIN_DIRECTORY } from '../data/defaults';
 import type { GoogleAuthProfile } from '../lib/googleAuth';
 import type { AppView } from '../types';
 import { ClickCannabisLogo } from './ClickCannabisLogo';
@@ -25,7 +28,10 @@ interface SidebarProps {
   portalName: string;
   portalSub: string;
   isAdmin: boolean;
+  activeAdminLabel?: string | null;
+  onSelectAdminLabel?: (label: string) => void;
   onToggleRole: () => void;
+  traineeUnlocked: boolean;
   darkMode: boolean;
   onToggleTheme: () => void;
   traineeName: string;
@@ -43,6 +49,7 @@ interface NavItemDef {
   icon: React.ReactNode;
   section?: string;
   adminOnly?: boolean;
+  requiresTraineeUnlock?: boolean;
 }
 
 const NAV_ITEMS: NavItemDef[] = [
@@ -51,6 +58,7 @@ const NAV_ITEMS: NavItemDef[] = [
     label: 'Treinamento Trainee (3 dias)',
     icon: <Award className="h-4 w-4 shrink-0" />,
     section: 'Programa Trainee',
+    requiresTraineeUnlock: true,
   },
   {
     id: 'reciclagem',
@@ -118,7 +126,10 @@ export function Sidebar({
   portalName,
   portalSub,
   isAdmin,
+  activeAdminLabel,
+  onSelectAdminLabel,
   onToggleRole,
+  traineeUnlocked,
   darkMode,
   onToggleTheme,
   traineeName,
@@ -129,6 +140,8 @@ export function Sidebar({
   onGoogleSignIn,
   onGoogleSignOut,
 }: SidebarProps) {
+  const lockGoogleSelect = Boolean(googleUser) && !isAdmin;
+
   return (
     <aside
       className="no-print bg-[var(--nav)] text-[var(--nav-ink)] flex md:flex-col gap-1 px-3 py-2.5 md:py-5 md:px-3.5 md:sticky md:top-0 md:h-screen overflow-x-auto md:overflow-y-auto shrink-0 border-b md:border-b-0 md:border-r border-[#1c402a]"
@@ -142,6 +155,7 @@ export function Sidebar({
       <div className="flex md:flex-col gap-1 md:mt-2 flex-1">
         {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => {
           const active = currentView === item.id;
+          const isLocked = Boolean(item.requiresTraineeUnlock && !traineeUnlocked && !isAdmin);
           return (
             <React.Fragment key={item.id}>
               {item.section && (
@@ -153,14 +167,22 @@ export function Sidebar({
                 type="button"
                 onClick={() => onSelectView(item.id)}
                 data-coach={`nav-${item.id}`}
+                title={
+                  isLocked
+                    ? `${item.label} bloqueado com cadeado — conclua a Trilha de Integração ou a Reciclagem para desbloquear`
+                    : undefined
+                }
                 className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors text-left ${
                   active
                     ? 'bg-[var(--mint)] text-[#0f2a1b] font-semibold'
-                    : 'text-[var(--nav-ink)] hover:bg-[rgba(143,232,156,0.12)]'
+                    : isLocked
+                      ? 'text-[var(--nav-muted)] hover:bg-[rgba(143,232,156,0.08)]'
+                      : 'text-[var(--nav-ink)] hover:bg-[rgba(143,232,156,0.12)]'
                 }`}
               >
                 {item.icon}
-                <span>{item.label}</span>
+                <span className="truncate">{item.label}</span>
+                {isLocked && <Lock className="h-3.5 w-3.5 text-amber-400 ml-auto shrink-0" />}
               </button>
             </React.Fragment>
           );
@@ -188,7 +210,9 @@ export function Sidebar({
                   <p className="text-xs font-semibold text-[var(--nav-ink)] truncate">
                     {googleUser.displayName}
                   </p>
-                  <p className="text-[10px] text-[var(--nav-muted)] truncate">{googleUser.email}</p>
+                  <p className="text-[10px] text-[var(--nav-muted)] truncate">
+                    {isAdmin ? 'Administração · Google' : googleUser.email}
+                  </p>
                 </div>
               </div>
               <button
@@ -214,9 +238,9 @@ export function Sidebar({
 
         <div className="px-1">
           <span className="block text-[10px] font-semibold text-[var(--nav-muted)] mb-1">
-            Processo individual ativo
+            {isAdmin ? 'Acompanhar trainee' : 'Colaboradora ativa'}
           </span>
-          {googleUser ? (
+          {lockGoogleSelect ? (
             <div className="w-full rounded-lg bg-[#102d1d] border border-[rgba(143,232,156,0.25)] px-2.5 py-1.5 text-xs font-semibold text-[var(--nav-ink)] truncate">
               {traineeName}
             </div>
@@ -236,18 +260,41 @@ export function Sidebar({
           )}
         </div>
 
+        {isAdmin && onSelectAdminLabel && !googleUser && (
+          <div className="px-1">
+            <span className="block text-[10px] font-semibold text-[var(--nav-muted)] mb-1">
+              ADM logada
+            </span>
+            <select
+              value={activeAdminLabel || ADMIN_DIRECTORY[0].label}
+              onChange={(e) => onSelectAdminLabel(e.target.value)}
+              aria-label="Selecionar administradora ativa"
+              className="w-full rounded-lg bg-[#102d1d] border border-[rgba(143,232,156,0.25)] px-2.5 py-1.5 text-xs text-[var(--mint)] font-semibold focus:outline-none focus:border-[var(--mint)]"
+            >
+              {ADMIN_DIRECTORY.map((adm) => (
+                <option key={adm.id} value={adm.label}>
+                  {adm.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="flex items-center justify-between gap-2 px-1">
           <button
             type="button"
             onClick={onToggleRole}
-            title="Alternar entre perfil Trainee e Instrutora/Coordenação"
-            className={`text-[11px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap transition-colors ${
+            title="Alternar entre perfil Trainee e Administração (Stephanye/Smary, Andréia, Iris, Kat)"
+            className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap transition-colors truncate ${
               isAdmin
                 ? 'bg-[var(--mint)] text-[#0f2a1b]'
                 : 'bg-[rgba(143,232,156,0.16)] text-[var(--mint)] hover:bg-[rgba(143,232,156,0.25)]'
             }`}
           >
-            {isAdmin ? 'Perfil: Instrutora' : 'Perfil: Trainee'}
+            {isAdmin && <ShieldCheck className="h-3 w-3 shrink-0" />}
+            <span className="truncate">
+              {isAdmin ? `ADM · ${activeAdminLabel || 'Liderança'}` : 'Perfil: Trainee'}
+            </span>
           </button>
 
           <button

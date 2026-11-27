@@ -15,8 +15,11 @@ import {
   Users,
 } from 'lucide-react';
 import {
+  canonicalPersonKey,
+  computeReciclagemStatus,
   computeTraineeSummary,
   DEFAULT_LEADERSHIP,
+  EMPTY_RECICLAGEM_PROGRESS,
   EMPTY_TRAINEE_PROGRESS,
   TRAINEE_DAYS,
   TRAINEE_INTEGRATED_POOL,
@@ -28,6 +31,7 @@ import {
 import type {
   AppView,
   PortalConfig,
+  ReciclagemPersonProgress,
   TraineeProgressStore,
   TraineeQuestionRaw,
   TraineeQuestionShuffled,
@@ -44,6 +48,9 @@ interface TraineeViewProps {
   allProgressByPerson: Record<string, TraineeProgressStore>;
   collaborators: string[];
   trilhaData: Record<string, TrilhaStore>;
+  reciclagemByPerson?: Record<string, ReciclagemPersonProgress>;
+  opsAccessOverrides?: Record<string, 'unlocked' | 'locked'>;
+  onToggleOpsAccess?: (personName: string, nextUnlocked: boolean) => void;
   activeCollaborator: string;
   googleLinked?: boolean;
   onChangeCollaborator: (name: string) => void;
@@ -121,6 +128,9 @@ export function TraineeView({
   allProgressByPerson,
   collaborators,
   trilhaData,
+  reciclagemByPerson = {},
+  opsAccessOverrides = {},
+  onToggleOpsAccess,
   activeCollaborator,
   googleLinked = false,
   onChangeCollaborator,
@@ -132,6 +142,27 @@ export function TraineeView({
   onGoView,
   onToast,
 }: TraineeViewProps) {
+  const getOpsAccessStatus = (personName: string): { unlocked: boolean; reason: string } => {
+    const key = canonicalPersonKey(personName);
+    const manual = opsAccessOverrides[key];
+    const p = allProgressByPerson[personName] || EMPTY_TRAINEE_PROGRESS();
+    const s = computeTraineeSummary(p, trilhaData[personName]);
+    const rec = computeReciclagemStatus(
+      reciclagemByPerson[personName] || EMPTY_RECICLAGEM_PROGRESS(personName)
+    );
+    const trilhaOk = s.trilhaPct >= 100;
+    const recOk = rec.examPassed || rec.status === 'Aprovada';
+    const traineeOk = s.completedStages === 4;
+
+    if (manual === 'locked') return { unlocked: false, reason: 'Bloqueio manual ADM' };
+    if (manual === 'unlocked') return { unlocked: true, reason: 'Liberado pela ADM' };
+    if (trilhaOk) return { unlocked: true, reason: 'Trilha concluída' };
+    if (recOk) return { unlocked: true, reason: 'Reciclagem aprovada' };
+    if (traineeOk) return { unlocked: true, reason: 'Provas concluídas' };
+    return { unlocked: false, reason: 'Aguardando trilha ou reciclagem' };
+  };
+
+  const activeOpsStatus = getOpsAccessStatus(activeCollaborator);
   const leadership = cfg.lideranca || DEFAULT_LEADERSHIP;
   const [tab, setTab] = useState<TraineeTab>('visao');
   const [newCollabName, setNewCollabName] = useState('');
@@ -297,7 +328,7 @@ export function TraineeView({
     onUpdateProgress(EMPTY_TRAINEE_PROGRESS());
     setSessions({});
     setTab('visao');
-    onToast(`Processo individual de ${activeCollaborator} reiniciado.`);
+    onToast(`Treinamento de ${activeCollaborator} reiniciado.`);
   };
 
   const stageKeys: TraineeStageKey[] = ['d1', 'd2', 'd3', 'final'];
@@ -719,10 +750,10 @@ export function TraineeView({
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 md:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-bold">Processo Individual da Equipe · ClickCannabis</h2>
+            <h2 className="text-lg font-bold">Equipe & Liberação do Treinamento Trainee</h2>
             <p className="text-xs text-[var(--muted)]">
               Cada colaboradora possui notas, práticas no simulador e trilha de integração
-              totalmente independentes.
+              totalmente independentes. Simulações e operações ficam sempre livres.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -742,7 +773,7 @@ export function TraineeView({
                   value={newCollabName}
                   onChange={(e) => setNewCollabName(e.target.value)}
                   placeholder="Colocar meu nome..."
-                  aria-label="Adicionar nome ao processo individual"
+                  aria-label="Adicionar nome na equipe"
                   className="w-40 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1.5 text-xs text-[var(--ink)] focus:outline-none focus:border-[var(--accent)]"
                 />
                 <button
@@ -776,7 +807,7 @@ export function TraineeView({
                 <th className="text-center px-2.5 py-2.5">Dia 3</th>
                 <th className="text-center px-2.5 py-2.5">Final Hard</th>
                 <th className="text-center px-2.5 py-2.5">Práticas</th>
-                <th className="text-center px-2.5 py-2.5">Progresso</th>
+                <th className="text-center px-2.5 py-2.5">Treinamento Trainee</th>
                 <th className="text-right px-3 py-2.5">Ações</th>
               </tr>
             </thead>
@@ -788,6 +819,7 @@ export function TraineeView({
                   (t) => p.prac[t.id]
                 ).length;
                 const isActive = name === activeCollaborator;
+                const opsInfo = getOpsAccessStatus(name);
 
                 return (
                   <tr
@@ -828,16 +860,54 @@ export function TraineeView({
                         </td>
                       );
                     })}
-                    <td className="px-2.5 py-2.5 text-center font-mono-num">{pracCount}/9</td>
                     <td className="px-2.5 py-2.5 text-center font-mono-num">
-                      <strong className="text-[var(--accent)]">{s.completedStages}/4 provas</strong>
+                      {pracCount}/9
                       <span className="block text-[10px] text-[var(--muted)]">
-                        Trilha {s.trilhaPct}%
+                        {s.completedStages}/4 provas
+                      </span>
+                    </td>
+                    <td className="px-2.5 py-2.5 text-center">
+                      <span
+                        title={opsInfo.reason}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${
+                          opsInfo.unlocked
+                            ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                            : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                        }`}
+                      >
+                        {opsInfo.unlocked ? (
+                          <Unlock className="h-3 w-3 shrink-0" />
+                        ) : (
+                          <Lock className="h-3 w-3 shrink-0" />
+                        )}
+                        {opsInfo.unlocked ? 'Liberada' : 'Cadeado'}
+                      </span>
+                      <span className="block text-[10px] text-[var(--muted)] mt-0.5">
+                        {opsInfo.reason}
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-right">
-                      <div className="inline-flex items-center gap-1.5">
-                        {(!googleLinked || isActive) && (
+                      <div className="inline-flex items-center gap-1.5 flex-wrap justify-end">
+                        {isAdmin && onToggleOpsAccess && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleOpsAccess(name, !opsInfo.unlocked)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 py-1 text-[11px] font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                          >
+                            {opsInfo.unlocked ? (
+                              <>
+                                <Lock className="h-3 w-3 text-amber-600" />
+                                Bloquear
+                              </>
+                            ) : (
+                              <>
+                                <Unlock className="h-3 w-3 text-[var(--accent)]" />
+                                Desbloquear
+                              </>
+                            )}
+                          </button>
+                        )}
+                        {(!googleLinked || isAdmin || isActive) && (
                           <button
                             type="button"
                             onClick={() => {
@@ -849,7 +919,7 @@ export function TraineeView({
                             Abrir processo
                           </button>
                         )}
-                        {(!googleLinked || isActive) && (
+                        {(!googleLinked || isAdmin || isActive) && (
                           <button
                             type="button"
                             onClick={() => {
@@ -998,6 +1068,73 @@ export function TraineeView({
 
       {tab === 'visao' && (
         <div className="space-y-4">
+          <section
+            className={`rounded-2xl border p-4 md:p-5 flex flex-wrap items-center justify-between gap-3 ${
+              activeOpsStatus.unlocked
+                ? 'border-[var(--accent)] bg-[var(--accent-soft)]/50'
+                : 'border-amber-500/40 bg-amber-500/10'
+            }`}
+          >
+            <div className="flex items-start gap-3 min-w-0">
+              <div
+                className={`h-10 w-10 rounded-xl grid place-items-center shrink-0 ${
+                  activeOpsStatus.unlocked
+                    ? 'bg-[var(--accent)] text-[var(--accent-ink)]'
+                    : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                }`}
+              >
+                {activeOpsStatus.unlocked ? (
+                  <Unlock className="h-5 w-5" />
+                ) : (
+                  <Lock className="h-5 w-5" />
+                )}
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-sm font-bold text-[var(--ink)]">
+                  {activeOpsStatus.unlocked
+                    ? `Treinamento Trainee desbloqueado para ${activeCollaborator}`
+                    : `Treinamento Trainee protegido com cadeado para ${activeCollaborator}`}
+                </p>
+                <p className="text-xs text-[var(--muted)] leading-relaxed">
+                  {activeOpsStatus.unlocked
+                    ? `Motivo: ${activeOpsStatus.reason}. Simulações e Operações (Solicitações, Confirmação, Consultas e CRM) seguem sempre liberadas.`
+                    : 'Apenas a área Treinamento Trainee fica protegida com cadeado até concluir a Trilha de Integração (100%) ou a Reciclagem (85%+), ou mediante liberação da ADM (Stephanye/Smary, Andréia, Iris ou Kat). As simulações e operações continuam 100% liberadas.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {!activeOpsStatus.unlocked && (
+                <button
+                  type="button"
+                  onClick={() => onGoView('reciclagem')}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold hover:border-[var(--accent)] whitespace-nowrap"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 text-[var(--accent)]" />
+                  Fazer Reciclagem
+                </button>
+              )}
+              {isAdmin && onToggleOpsAccess && (
+                <button
+                  type="button"
+                  onClick={() => onToggleOpsAccess(activeCollaborator, !activeOpsStatus.unlocked)}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-3 py-1.5 text-xs font-semibold whitespace-nowrap"
+                >
+                  {activeOpsStatus.unlocked ? (
+                    <>
+                      <Lock className="h-3.5 w-3.5" />
+                      Travar com cadeado
+                    </>
+                  ) : (
+                    <>
+                      <Unlock className="h-3.5 w-3.5" />
+                      Desbloquear (ADM)
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </section>
+
           {/* Mapa de progressão 4 etapas */}
           <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 md:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">

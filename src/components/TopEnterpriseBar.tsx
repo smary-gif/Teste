@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Award, Bot, ChevronRight, LogOut, UserCheck, UserPlus, X } from 'lucide-react';
+import { Award, Bot, ChevronRight, LogOut, ShieldCheck, UserCheck, UserPlus, X } from 'lucide-react';
 import type { GoogleAuthProfile } from '../lib/googleAuth';
 import type { AppView, TraineeSummary } from '../types';
 import { ClickCannabisLogo } from './ClickCannabisLogo';
@@ -17,6 +17,8 @@ interface TopEnterpriseBarProps {
   googleAuthLoading: boolean;
   onGoogleSignIn: () => void;
   onGoogleSignOut: () => void;
+  isAdmin?: boolean;
+  activeAdminLabel?: string | null;
 }
 
 export function TopEnterpriseBar({
@@ -31,9 +33,12 @@ export function TopEnterpriseBar({
   googleAuthLoading,
   onGoogleSignIn,
   onGoogleSignOut,
+  isAdmin = false,
+  activeAdminLabel = null,
 }: TopEnterpriseBarProps) {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
+  const lockTraineeSwitch = Boolean(googleUser) && !isAdmin;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,22 +55,24 @@ export function TopEnterpriseBar({
         <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
           <ClickCannabisLogo subtitle="Academia Corporativa · Trainee" />
           <span className="hidden sm:inline text-[var(--line)]">/</span>
-          {googleUser ? (
-            <div
-              className="flex items-center gap-1.5 text-xs font-semibold text-[var(--muted)]"
-              title="Processo individual vinculado à sua Conta Google"
-            >
+          {isAdmin && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-soft)] border border-[var(--accent)] px-2.5 py-0.5 text-[11px] font-bold text-[var(--accent)] whitespace-nowrap">
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+              ADM · {activeAdminLabel || 'Liderança'}
+            </span>
+          )}
+          {lockTraineeSwitch ? (
+            <span className="hidden md:inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-semibold text-[var(--ink)]">
               <UserCheck className="h-3.5 w-3.5 text-[var(--accent)] shrink-0" />
-              <span className="hidden md:inline whitespace-nowrap">Processo individual:</span>
-              <span className="rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-bold text-[var(--ink)]">
-                {activeCollaborator}
-              </span>
-            </div>
+              <span>{activeCollaborator}</span>
+            </span>
           ) : (
             <>
               <label className="flex items-center gap-1.5 text-xs font-semibold text-[var(--muted)]">
                 <UserCheck className="h-3.5 w-3.5 text-[var(--accent)] shrink-0" />
-                <span className="hidden md:inline whitespace-nowrap">Processo individual:</span>
+                <span className="hidden md:inline whitespace-nowrap">
+                  {isAdmin ? 'Trainee:' : 'Colaboradora:'}
+                </span>
                 <select
                   value={activeCollaborator}
                   onChange={(e) => onChangeCollaborator(e.target.value)}
@@ -88,7 +95,7 @@ export function TopEnterpriseBar({
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     placeholder="Digite seu nome..."
-                    aria-label="Nome para processo individual"
+                    aria-label="Nome da colaboradora"
                     className="w-36 rounded-lg border border-[var(--accent)] bg-[var(--surface)] px-2.5 py-1 text-xs text-[var(--ink)] focus:outline-none"
                   />
                   <button
@@ -116,7 +123,7 @@ export function TopEnterpriseBar({
                   className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-semibold text-[var(--ink)] hover:border-[var(--accent)] whitespace-nowrap"
                 >
                   <UserPlus className="h-3.5 w-3.5 text-[var(--accent)]" />
-                  <span>Colocar meu nome</span>
+                  <span>{isAdmin ? 'Adicionar trainee' : 'Colocar meu nome'}</span>
                 </button>
               )}
             </>
@@ -139,7 +146,7 @@ export function TopEnterpriseBar({
                   {googleUser.displayName.charAt(0).toUpperCase()}
                 </span>
               )}
-              <span className="font-semibold text-[var(--ink)] max-w-[140px] truncate hidden sm:inline">
+              <span className="font-semibold text-[var(--ink)] max-w-[160px] truncate hidden sm:inline">
                 {googleUser.displayName}
               </span>
               <button

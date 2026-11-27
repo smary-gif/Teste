@@ -390,5 +390,6 @@ export interface SharedPortalContent {
   sceneAudioUrls?: Record<string, string>;
   sharedVoiceProfile?: AiVoiceProfile | null;
   teamSubsectors?: Record<string, string>;
+  opsAccessOverrides?: Record<string, 'unlocked' | 'locked'>;
   updatedAt?: number;
 }

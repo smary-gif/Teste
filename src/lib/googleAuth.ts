@@ -9,7 +9,7 @@ import {
   type Unsubscribe,
   type User,
 } from 'firebase/auth';
-import { canonicalPersonKey } from '../data/defaults';
+import { canonicalPersonKey, EQUIPE } from '../data/defaults';
 
 export interface GoogleAuthProfile {
   uid: string;
@@ -166,13 +166,23 @@ export function resolveCollaboratorFromGoogle(
   profile: Pick<GoogleAuthProfile, 'displayName' | 'email'>,
   existingCollaborators: string[]
 ): string {
+  const email = (profile.email || '').trim().toLowerCase();
   const rawName = (profile.displayName || '').trim();
-  const emailLocal = (profile.email || '').split('@')[0]?.trim() || '';
+  const emailLocal = email.split('@')[0]?.trim() || '';
 
   const byKey = new Map<string, string>();
   existingCollaborators.forEach((name) => {
     byKey.set(canonicalPersonKey(name), name);
   });
+
+  if (email) {
+    const teamEmailMatch = EQUIPE.find(
+      (m) => m.email && m.email.trim().toLowerCase() === email
+    );
+    if (teamEmailMatch) {
+      return byKey.get(canonicalPersonKey(teamEmailMatch.nome)) || teamEmailMatch.nome;
+    }
+  }
 
   if (rawName) {
     const fullMatch = byKey.get(canonicalPersonKey(rawName));

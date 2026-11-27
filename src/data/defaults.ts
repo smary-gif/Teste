@@ -249,7 +249,7 @@ export const DEFAULT_CONFIG: PortalConfig = {
   pacientesSimulados: 15,
   treinoInicio: '2026-11-16',
   treinoOrdem: [
-    'Smary', 'Rayssa', 'Aninha', 'Ana Gabriela', 'Greicy', 'Caroline Caca', 'Isabel', 'Jamily',
+    'Rayssa', 'Aninha', 'Ana Gabriela', 'Greicy', 'Caroline Caca', 'Isabel', 'Jamily',
     'Julyana', 'Karolyne Nani', 'Maria Julia', 'Naiara', 'Simone', 'Tuany', 'Yasmin',
   ],
 };
@@ -1692,8 +1692,79 @@ export const TRILHA_STAGES: TrilhaStage[] = [
   },
 ];
 
+export interface AdminAccountDef {
+  id: 'stephanye' | 'andreia' | 'iris' | 'kat';
+  label: string;
+  role: string;
+  aliases: string[];
+  emails: string[];
+}
+
+export const ADMIN_DIRECTORY: AdminAccountDef[] = [
+  {
+    id: 'stephanye',
+    label: 'Stephanye (Smary)',
+    role: 'Liderança em Treinamento · ADM',
+    aliases: ['smary', 'stephanye', 'stephanye mary'],
+    emails: ['smary@clickcannabis.com', 'stephanye@clickcannabis.com'],
+  },
+  {
+    id: 'andreia',
+    label: 'Andréia',
+    role: 'Treinadora · ADM',
+    aliases: ['andreia'],
+    emails: ['andreia@clickcannabis.com'],
+  },
+  {
+    id: 'iris',
+    label: 'Iris',
+    role: 'Coordenadora · ADM',
+    aliases: ['iris'],
+    emails: ['iris@clickcannabis.com'],
+  },
+  {
+    id: 'kat',
+    label: 'Kat (Katlen Pfeifer)',
+    role: 'Liderança · ADM',
+    aliases: ['kat', 'katlen', 'katlen pfeifer'],
+    emails: ['kat@clickcannabis.com', 'katlen@clickcannabis.com', 'kpfeifer@clickcannabis.com'],
+  },
+];
+
+export function isAdminCollaboratorName(raw: string): boolean {
+  const n = norm(raw);
+  if (!n) return false;
+  const first = n.split(/\s+/)[0] || '';
+  return ADMIN_DIRECTORY.some((adm) =>
+    adm.aliases.some((alias) => n === alias || first === alias || n.startsWith(`${alias} `))
+  );
+}
+
+export function resolveAdminFromGoogle(profile: {
+  displayName?: string;
+  email?: string;
+}): AdminAccountDef | null {
+  const email = (profile.email || '').trim().toLowerCase();
+  const n = norm(profile.displayName || '');
+  const first = n.split(/\s+/)[0] || '';
+  const emailLocal = norm(email.split('@')[0] || '');
+
+  for (const adm of ADMIN_DIRECTORY) {
+    if (email && adm.emails.includes(email)) return adm;
+    if (
+      adm.aliases.some(
+        (alias) =>
+          (n && (n === alias || first === alias || n.startsWith(`${alias} `))) ||
+          (emailLocal && (emailLocal === alias || emailLocal.startsWith(alias)))
+      )
+    ) {
+      return adm;
+    }
+  }
+  return null;
+}
+
 export const EQUIPE: TeamMember[] = [
-  { apelido: 'Smary', nome: 'Smary', email: 'smary@clickcannabis.com', subsetor: 'Trainee' },
   { apelido: 'Ana', nome: 'Ana Gabriela Garcia', email: 'agarcia@clickcannabis.com', subsetor: 'Auditoria' },
   { apelido: 'Michele', nome: 'Michele Xavier', email: 'mxavier@clickcannabis.com', subsetor: 'Auditoria' },
   { apelido: 'Brenda', nome: 'Brenda Miranda', email: 'bmiranda@clickcannabis.com', subsetor: 'Auditoria' },
@@ -1778,7 +1849,7 @@ export function getCollaboratorList(cfg: PortalConfig): string[] {
   const out: string[] = [];
   const push = (n: string) => {
     const clean = n.trim();
-    if (!clean) return;
+    if (!clean || isAdminCollaboratorName(clean)) return;
     const key = canonicalPersonKey(clean);
     if (seen.has(key)) return;
     seen.add(key);
