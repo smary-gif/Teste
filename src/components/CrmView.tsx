@@ -240,32 +240,42 @@ export function CrmView({
   // Overrides locais para simular mudanças de status direto nos cards do CRM
   const [statusOverrides, setStatusOverrides] = useState<Record<string, CrmCardStatus>>({});
 
-  // Filtros aplicados e rascunho dentro do modal/popover Filtrar (Consulta & Médico)
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [filterTab, setFilterTab] = useState<'consulta' | 'medico'>('consulta');
+  // Filtros separados: topo = apenas Médico; ícone da coluna = apenas Consulta
+  const [doctorFilterOpen, setDoctorFilterOpen] = useState(false);
+  const [consultaFilterCol, setConsultaFilterCol] = useState<CrmColumnId | null>(null);
   const [appliedConsultas, setAppliedConsultas] = useState<CrmFilterConsultaOption[]>([]);
   const [appliedDoctors, setAppliedDoctors] = useState<string[]>([]);
   const [draftConsultas, setDraftConsultas] = useState<CrmFilterConsultaOption[]>([]);
   const [draftDoctors, setDraftDoctors] = useState<string[]>([]);
   const [doctorQuery, setDoctorQuery] = useState('');
-  const filterAnchorRef = useRef<HTMLDivElement | null>(null);
+  const doctorFilterRef = useRef<HTMLDivElement | null>(null);
+  const consultaFilterRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!filterOpen) return;
+    if (!doctorFilterOpen && !consultaFilterCol) return;
     const handleOutside = (e: MouseEvent) => {
-      if (filterAnchorRef.current && !filterAnchorRef.current.contains(e.target as Node)) {
-        setFilterOpen(false);
+      const target = e.target as Node;
+      if (doctorFilterOpen && doctorFilterRef.current && !doctorFilterRef.current.contains(target)) {
+        setDoctorFilterOpen(false);
+      }
+      if (consultaFilterCol && consultaFilterRef.current && !consultaFilterRef.current.contains(target)) {
+        setConsultaFilterCol(null);
       }
     };
     document.addEventListener('mousedown', handleOutside);
     return () => document.removeEventListener('mousedown', handleOutside);
-  }, [filterOpen]);
+  }, [doctorFilterOpen, consultaFilterCol]);
 
-  const openFilterPopover = (initialTab: 'consulta' | 'medico' = 'consulta') => {
-    setDraftConsultas(appliedConsultas);
+  const openDoctorFilter = () => {
+    setConsultaFilterCol(null);
     setDraftDoctors(appliedDoctors);
-    setFilterTab(initialTab);
-    setFilterOpen(true);
+    setDoctorFilterOpen((cur) => !cur);
+  };
+
+  const openConsultaFilter = (colId: CrmColumnId) => {
+    setDoctorFilterOpen(false);
+    setDraftConsultas(appliedConsultas);
+    setConsultaFilterCol((cur) => (cur === colId ? null : colId));
   };
 
   const allDoctors = useMemo(() => {
@@ -348,10 +358,25 @@ export function CrmView({
     );
   };
 
-  const handleApplyFilters = () => {
-    setAppliedConsultas(draftConsultas);
+  const handleApplyDoctorFilter = () => {
     setAppliedDoctors(draftDoctors);
-    setFilterOpen(false);
+    setDoctorFilterOpen(false);
+  };
+
+  const handleClearDoctorFilter = () => {
+    setDraftDoctors([]);
+    setAppliedDoctors([]);
+    setDoctorQuery('');
+  };
+
+  const handleApplyConsultaFilter = () => {
+    setAppliedConsultas(draftConsultas);
+    setConsultaFilterCol(null);
+  };
+
+  const handleClearConsultaFilter = () => {
+    setDraftConsultas([]);
+    setAppliedConsultas([]);
   };
 
   const handleClearFilters = () => {
@@ -444,7 +469,7 @@ export function CrmView({
           </span>
         </div>
 
-        <div className="relative flex flex-wrap items-center gap-2" ref={filterAnchorRef}>
+        <div className="relative flex flex-wrap items-center gap-2" ref={doctorFilterRef}>
           <div className="relative">
             <Search className="h-3.5 w-3.5 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
@@ -459,146 +484,94 @@ export function CrmView({
 
           <button
             type="button"
-            onClick={() => (filterOpen ? setFilterOpen(false) : openFilterPopover('consulta'))}
+            onClick={openDoctorFilter}
             className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold transition-colors whitespace-nowrap ${
-              activeFilterCount > 0 || filterOpen
+              appliedDoctors.length > 0 || doctorFilterOpen
                 ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
                 : 'border-[var(--line)] bg-[var(--surface)] hover:border-[var(--accent)]'
             }`}
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
             Filtrar
-            {activeFilterCount > 0 && (
+            {appliedDoctors.length > 0 && (
               <span className="ml-0.5 rounded-full bg-[var(--accent)] text-[var(--accent-ink)] px-1.5 py-0.2 text-[10px] font-bold">
-                {activeFilterCount}
+                {appliedDoctors.length}
               </span>
             )}
           </button>
 
-          {filterOpen && (
+          {doctorFilterOpen && (
             <div
               role="dialog"
-              aria-label="Filtrar acompanhamento de consultas"
+              aria-label="Filtrar por médico"
               className="absolute right-0 top-11 z-40 w-[330px] max-w-[calc(100vw-24px)] rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-2xl p-4 space-y-3"
             >
               <div className="flex items-center justify-between">
                 <strong className="text-base font-bold">Filtrar</strong>
                 <button
                   type="button"
-                  onClick={() => setFilterOpen(false)}
-                  aria-label="Fechar filtros"
+                  onClick={() => setDoctorFilterOpen(false)}
+                  aria-label="Fechar filtro de médico"
                   className="h-7 w-7 rounded-lg grid place-items-center text-[var(--muted)] hover:bg-[var(--surface-2)]"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <div className="flex items-center gap-1 rounded-xl bg-[var(--surface-2)] p-1 border border-[var(--line)]">
-                <button
-                  type="button"
-                  onClick={() => setFilterTab('consulta')}
-                  className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    filterTab === 'consulta'
-                      ? 'bg-[var(--surface)] text-[var(--ink)] shadow-sm'
-                      : 'text-[var(--muted)] hover:text-[var(--ink)]'
-                  }`}
-                >
-                  Consulta{draftConsultas.length ? ` (${draftConsultas.length})` : ''}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterTab('medico')}
-                  className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    filterTab === 'medico'
-                      ? 'bg-[var(--surface)] text-[var(--ink)] shadow-sm'
-                      : 'text-[var(--muted)] hover:text-[var(--ink)]'
-                  }`}
-                >
-                  Médico{draftDoctors.length ? ` (${draftDoctors.length})` : ''}
-                </button>
-              </div>
-
-              {filterTab === 'consulta' ? (
-                <div className="space-y-1">
-                  <span className="text-xs font-semibold text-[var(--muted)] block pb-1">
-                    Consulta
-                  </span>
-                  <div className="space-y-1 max-h-[260px] overflow-y-auto pr-1">
-                    {CONSULTA_FILTER_OPTIONS.map((opt) => {
-                      const checked = draftConsultas.includes(opt);
+              <div className="space-y-2.5">
+                <span className="text-xs font-semibold text-[var(--muted)] block">Médico</span>
+                <div className="relative">
+                  <Search className="h-3.5 w-3.5 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={doctorQuery}
+                    onChange={(e) => setDoctorQuery(e.target.value)}
+                    placeholder="Pesquise por um médico"
+                    aria-label="Pesquise por um médico"
+                    className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] pl-8 pr-3 py-2 text-xs focus:outline-none focus:border-[var(--accent)]"
+                  />
+                </div>
+                <div className="space-y-1 max-h-[240px] overflow-y-auto pr-1">
+                  {filteredDoctorOptions.length ? (
+                    filteredDoctorOptions.map((doc) => {
+                      const checked = draftDoctors.includes(doc);
                       return (
                         <label
-                          key={opt}
-                          className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs cursor-pointer hover:bg-[var(--surface-2)]"
+                          key={doc}
+                          className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-xs cursor-pointer hover:bg-[var(--surface-2)]"
                         >
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => handleToggleDraftConsulta(opt)}
-                            className="h-4 w-4 rounded border-[var(--line)] accent-[var(--accent)]"
+                            onChange={() => handleToggleDraftDoctor(doc)}
+                            className="h-4 w-4 rounded border-[var(--line)] accent-[var(--accent)] shrink-0"
                           />
-                          <span>{opt}</span>
+                          <span className="h-7 w-7 rounded-full bg-[var(--accent-soft)] text-[var(--accent)] font-bold text-[10px] grid place-items-center shrink-0">
+                            {initials(doc)}
+                          </span>
+                          <span className="truncate">{doc}</span>
                         </label>
                       );
-                    })}
-                  </div>
+                    })
+                  ) : (
+                    <p className="text-xs text-[var(--muted)] py-3 text-center">
+                      Nenhum médico encontrado.
+                    </p>
+                  )}
                 </div>
-              ) : (
-                <div className="space-y-2.5">
-                  <span className="text-xs font-semibold text-[var(--muted)] block">Médico</span>
-                  <div className="relative">
-                    <Search className="h-3.5 w-3.5 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    <input
-                      type="text"
-                      value={doctorQuery}
-                      onChange={(e) => setDoctorQuery(e.target.value)}
-                      placeholder="Pesquise por um médico"
-                      aria-label="Pesquise por um médico"
-                      className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] pl-8 pr-3 py-2 text-xs focus:outline-none focus:border-[var(--accent)]"
-                    />
-                  </div>
-                  <div className="space-y-1 max-h-[220px] overflow-y-auto pr-1">
-                    {filteredDoctorOptions.length ? (
-                      filteredDoctorOptions.map((doc) => {
-                        const checked = draftDoctors.includes(doc);
-                        return (
-                          <label
-                            key={doc}
-                            className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-xs cursor-pointer hover:bg-[var(--surface-2)]"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => handleToggleDraftDoctor(doc)}
-                              className="h-4 w-4 rounded border-[var(--line)] accent-[var(--accent)] shrink-0"
-                            />
-                            <span className="h-7 w-7 rounded-full bg-[var(--accent-soft)] text-[var(--accent)] font-bold text-[10px] grid place-items-center shrink-0">
-                              {initials(doc)}
-                            </span>
-                            <span className="truncate">{doc}</span>
-                          </label>
-                        );
-                      })
-                    ) : (
-                      <p className="text-xs text-[var(--muted)] py-3 text-center">
-                        Nenhum médico encontrado.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
+              </div>
 
               <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--line)]">
                 <button
                   type="button"
-                  onClick={handleClearFilters}
+                  onClick={handleClearDoctorFilter}
                   className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold text-[var(--accent)] hover:border-[var(--accent)]"
                 >
                   Limpar tudo
                 </button>
                 <button
                   type="button"
-                  onClick={handleApplyFilters}
+                  onClick={handleApplyDoctorFilter}
                   className="rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-3 py-2 text-xs font-semibold hover:opacity-95"
                 >
                   Aplicar filtro
@@ -670,15 +643,86 @@ export function CrmView({
                   </span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => openFilterPopover('consulta')}
-                  title={`Filtrar ${col.title}`}
-                  aria-label={`Filtrar coluna ${col.title}`}
-                  className="h-7 w-7 rounded-lg grid place-items-center text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]"
+                <div
+                  className="relative"
+                  ref={consultaFilterCol === col.id ? consultaFilterRef : undefined}
                 >
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => openConsultaFilter(col.id)}
+                    title={`Filtrar consultas em ${col.title}`}
+                    aria-label={`Filtrar consultas em ${col.title}`}
+                    className={`h-7 w-7 rounded-lg grid place-items-center transition-colors ${
+                      consultaFilterCol === col.id || appliedConsultas.length > 0
+                        ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                        : 'text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]'
+                    }`}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                  </button>
+
+                  {consultaFilterCol === col.id && (
+                    <div
+                      role="dialog"
+                      aria-label="Filtrar status da consulta"
+                      className="absolute right-0 top-9 z-40 w-[260px] max-w-[calc(100vw-32px)] rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-2xl p-4 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <strong className="text-base font-bold">Filtrar</strong>
+                        <button
+                          type="button"
+                          onClick={() => setConsultaFilterCol(null)}
+                          aria-label="Fechar filtro de consulta"
+                          className="h-7 w-7 rounded-lg grid place-items-center text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-xs font-semibold text-[var(--muted)] block pb-1">
+                          Consulta
+                        </span>
+                        <div className="space-y-1 max-h-[260px] overflow-y-auto pr-1">
+                          {CONSULTA_FILTER_OPTIONS.map((opt) => {
+                            const checked = draftConsultas.includes(opt);
+                            return (
+                              <label
+                                key={opt}
+                                className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs cursor-pointer hover:bg-[var(--surface-2)]"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => handleToggleDraftConsulta(opt)}
+                                  className="h-4 w-4 rounded border-[var(--line)] accent-[var(--accent)]"
+                                />
+                                <span>{opt}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--line)]">
+                        <button
+                          type="button"
+                          onClick={handleClearConsultaFilter}
+                          className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--ink)]"
+                        >
+                          Limpar tudo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleApplyConsultaFilter}
+                          className="rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] px-3 py-2 text-xs font-semibold hover:opacity-95"
+                        >
+                          Aplicar filtro
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-2.5 max-h-[640px] overflow-y-auto pr-0.5">
