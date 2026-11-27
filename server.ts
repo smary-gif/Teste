@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 const SHARED_MEDIA_DIR = path.resolve(__dirname, 'public', 'shared-media');
 const SHARED_CONTENT_FILE = path.join(SHARED_MEDIA_DIR, 'portal-content.json');
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const MODEL = 'gemini-4-hydrogen';
 
 function getAiClient(): GoogleGenAI | null {
